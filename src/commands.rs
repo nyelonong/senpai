@@ -16,10 +16,11 @@ use crate::reviewer::{self, Launch, HTML_REVIEWER};
 use crate::snapshot::{collect_snapshot, Snapshot};
 use crate::{EXIT_NOT_APPROVED, EXIT_OK};
 
-pub fn emit(payload: &Value) {
+pub fn emit(payload: &Value) -> Result<()> {
     let mut stdout = std::io::stdout().lock();
-    let _ = writeln!(stdout, "{}", json::dumps(payload, json::SORTED));
-    let _ = stdout.flush();
+    writeln!(stdout, "{}", json::dumps(payload, json::SORTED))
+        .and_then(|()| stdout.flush())
+        .map_err(|error| Error::Other(crate::error::os_error(&error, None)))
 }
 
 /// Runs a reviewer for one request: the configured process, or a test double.
@@ -98,6 +99,7 @@ pub fn command_review(
     timeout: Option<u64>,
     mut recovery: Option<&mut Recovery>,
 ) -> Result<i32> {
+    let _signals = reviewer::SignalGuard::install(&[libc::SIGINT]);
     let paths = ledger::ledger_paths(git, &request.repositories)?;
     // Revoke any prior approval first: nothing counts as approved until this
     // review completes and the reviewed state is verified again.
@@ -144,7 +146,9 @@ pub fn command_review(
         if let Some(recovery) = recovery.as_deref() {
             recovery.finish(&result, code)?;
         }
-        emit(&result.to_value());
+        interrupted_check()?;
+        emit(&result.to_value())?;
+        interrupted_check()?;
         Ok(code)
     })();
     if let Err(error) = &outcome {
@@ -169,7 +173,7 @@ pub fn command_verify(git: &dyn Git, repositories: &[Repository]) -> Result<i32>
                     .with("fingerprint", snapshot.fingerprint.as_str())
                     .with("state", state_of(entry.as_ref()))
                     .with("reason", reason),
-            ));
+            ))?;
             return Ok(EXIT_NOT_APPROVED);
         }
     }
@@ -179,7 +183,7 @@ pub fn command_verify(git: &dyn Git, repositories: &[Repository]) -> Result<i32>
             .with("fingerprint", snapshot.fingerprint.as_str())
             .with("state", state_of(entry.as_ref()))
             .with("reason", "the approval matches the current state"),
-    ));
+    ))?;
     Ok(EXIT_OK)
 }
 
@@ -233,7 +237,7 @@ pub fn command_status(git: &dyn Git, repositories: &[Repository]) -> Result<i32>
             .with("reason", reason)
             .with("entry", first.clone().map_or(Value::Null, Value::Object))
             .with("repositories", Value::Array(reports)),
-    ));
+    ))?;
     Ok(if approved { EXIT_OK } else { EXIT_NOT_APPROVED })
 }
 
@@ -257,7 +261,7 @@ pub fn command_close(git: &dyn Git, state: &str, repositories: &[Repository]) ->
             .with("fingerprint", snapshot.fingerprint.as_str())
             .with("state", state)
             .with("reason", format!("recorded {state} in the approval ledger")),
-    ));
+    ))?;
     Ok(EXIT_OK)
 }
 
@@ -304,6 +308,7 @@ pub fn command_review_doc(
     timeout: Option<u64>,
     mut recovery: Option<&mut Recovery>,
 ) -> Result<i32> {
+    let _signals = reviewer::SignalGuard::install(&[libc::SIGINT]);
     let path = request.path_bytes()?;
     let ledger_file = vec![ledger::document_ledger_path(git, &path)?];
     let previous = newest_entry(&ledger_file[0])?;
@@ -346,7 +351,9 @@ pub fn command_review_doc(
         if let Some(recovery) = recovery.as_deref() {
             recovery.finish(&result, code)?;
         }
-        emit(&result.to_value());
+        interrupted_check()?;
+        emit(&result.to_value())?;
+        interrupted_check()?;
         Ok(code)
     })();
     if let Err(error) = &outcome {
@@ -370,7 +377,7 @@ pub fn command_verify_doc(git: &dyn Git, request: &DocumentRequest) -> Result<i3
             .with("state", state_of(entry.as_ref()))
             .with("document", &request.path)
             .with("reason", reason),
-    ));
+    ))?;
     Ok(if approved { EXIT_OK } else { EXIT_NOT_APPROVED })
 }
 

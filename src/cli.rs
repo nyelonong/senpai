@@ -231,12 +231,11 @@ fn find_option<'a>(sub: &'a Subcommand, flag: &str) -> Result<Option<&'a OptionS
 pub fn parse(argv: &[PyStr]) -> Parsed {
     let tokens: Vec<String> = argv.iter().map(PyStr::display).collect();
     let mut index = 0;
-    while index < tokens.len() && is_option(None, &tokens[index]) {
-        let token = &tokens[index];
+    if let Some(token) = tokens.first().filter(|token| is_option(None, token)) {
         if token == "-h" || (token.len() > 2 && "--help".starts_with(token.as_str())) {
             return Parsed::Help(help_text(None));
         }
-        return error(None, &format!("unrecognized arguments: {}", tokens[index..].join(" ")));
+        return error(None, &format!("unrecognized arguments: {}", tokens.join(" ")));
     }
     let Some(name) = tokens.get(index) else {
         return error(None, "the following arguments are required: command");

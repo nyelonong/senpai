@@ -478,14 +478,16 @@ pub fn build_document_payload(request: &DocumentRequest) -> Result<Value> {
 // decisions
 // ---------------------------------------------------------------------------
 
+type LineKey = (PyStr, PyStr, &'static str);
+
 enum Index {
-    Diff(Vec<((PyStr, PyStr, &'static str), Vec<i128>)>),
+    Diff(Vec<(LineKey, Vec<i128>)>),
     Document(Vec<i128>),
 }
 
 fn line_index(payload: &Value) -> Index {
-    let mut index: Vec<((PyStr, PyStr, &'static str), Vec<i128>)> = Vec::new();
-    let mut add = |key: (PyStr, PyStr, &'static str), line: i128| match index.iter_mut().find(|(k, _)| *k == key) {
+    let mut index: Vec<(LineKey, Vec<i128>)> = Vec::new();
+    let mut add = |key: LineKey, line: i128| match index.iter_mut().find(|(k, _)| *k == key) {
         Some((_, lines)) => lines.push(line),
         None => index.push((key, vec![line])),
     };
@@ -754,6 +756,52 @@ fn fail(request: tiny_http::Request, status: u16, message: &str) {
     respond(request, status, body.into_bytes(), "application/json; charset=utf-8");
 }
 
+/// The path and query of a request target, as `urllib.parse.urlsplit` reads it,
+/// so an absolute-form target such as `http://host/<token>/` routes the same.
+fn split_target(target: &str) -> (String, String) {
+    let mut rest = target;
+    if let Some(colon) = rest.find(':') {
+        let scheme = &rest[..colon];
+        if scheme.starts_with(|c: char| c.is_ascii_alphabetic())
+            && scheme.chars().all(|c| c.is_ascii_alphanumeric() || "+-.".contains(c))
+        {
+            rest = &rest[colon + 1..];
+        }
+    }
+    if let Some(after) = rest.strip_prefix("//") {
+        rest = after.find(['/', '?', '#']).map_or("", |end| &after[end..]);
+    }
+    let rest = rest.split_once('#').map_or(rest, |(before, _)| before);
+    let (path, query) = rest.split_once('?').unwrap_or((rest, ""));
+    (path.to_string(), query.to_string())
+}
+
+/// The first non-blank value of `key`, decoded as `urllib.parse.parse_qs` does.
+fn query_value(query: &str, key: &str) -> Option<String> {
+    let decode = |part: &str| -> String {
+        let bytes = part.replace('+', " ").into_bytes();
+        let mut out = Vec::with_capacity(bytes.len());
+        let mut i = 0;
+        while i < bytes.len() {
+            let hex = |b: u8| (b as char).to_digit(16);
+            if bytes[i] == b'%' && i + 2 < bytes.len() {
+                if let (Some(high), Some(low)) = (hex(bytes[i + 1]), hex(bytes[i + 2])) {
+                    out.push((high * 16 + low) as u8);
+                    i += 3;
+                    continue;
+                }
+            }
+            out.push(bytes[i]);
+            i += 1;
+        }
+        String::from_utf8_lossy(&out).into_owned()
+    };
+    query.split('&').find_map(|pair| {
+        let (name, value) = pair.split_once('=')?;
+        (!value.is_empty() && decode(name) == key).then(|| decode(value))
+    })
+}
+
 fn route(session: &Session, path: &str) -> Option<String> {
     let parts: Vec<&str> = path.split('/').filter(|p| !p.is_empty()).collect();
     let first = parts.first()?;
@@ -776,10 +824,7 @@ fn route(session: &Session, path: &str) -> Option<String> {
 }
 
 fn handle(session: &Arc<Session>, mut request: tiny_http::Request) {
-    let url = request.url().to_string();
-    let (path, query) = url.split_once('?').unwrap_or((url.as_str(), ""));
-    let path = path.split_once('#').map_or(path, |(p, _)| p).to_string();
-    let query = query.split_once('#').map_or(query, |(q, _)| q).to_string();
+    let (path, query) = split_target(request.url());
     let route = route(session, &path);
     let last = path.rsplit('/').next().unwrap_or("").to_string();
     match request.method() {
@@ -811,12 +856,7 @@ fn handle(session: &Arc<Session>, mut request: tiny_http::Request) {
                 fail(request, 405, &message)
             }
             Some("closing") => {
-                let page = query
-                    .split('&')
-                    .filter_map(|pair| pair.split_once('=').or(Some((pair, ""))))
-                    .find(|(k, _)| *k == "page")
-                    .map(|(_, v)| v.to_string())
-                    .unwrap_or_default();
+                let page = query_value(&query, "page").unwrap_or_default();
                 let valid = !page.is_empty() && page.len() <= 9 && page.bytes().all(|b| b.is_ascii_digit());
                 match page.parse::<u64>() {
                     Ok(n) if valid && n >= 1 => {
@@ -1021,7 +1061,7 @@ pub fn main(argv: &[PyStr]) -> i32 {
             "--review" => &mut review,
             "--review-doc" => &mut review_doc,
             _ => {
-                eprint!("{}{PRODUCER}: error: unrecognized arguments: {token}\n", usage());
+                eprintln!("{}{PRODUCER}: error: unrecognized arguments: {token}", usage());
                 return crate::EXIT_ERROR;
             }
         };
@@ -1038,7 +1078,7 @@ pub fn main(argv: &[PyStr]) -> i32 {
         *slot = Some(value);
     }
     if review.is_none() && review_doc.is_none() {
-        eprint!("{}{PRODUCER}: a review request is required: --review JSON or --review-doc JSON\n", usage());
+        eprintln!("{}{PRODUCER}: a review request is required: --review JSON or --review-doc JSON", usage());
         return crate::EXIT_ERROR;
     }
     let lifetime = positive_seconds(LIFETIME_ENV, LIFETIME_SECONDS);
@@ -1131,5 +1171,29 @@ mod tests {
         let page = String::from_utf8(render_page("tok", "document", 3)).unwrap();
         assert!(page.contains(r#""url":"/tok/","page":3,"maxLines":1500,"mode":"document","reviewUrl":"api/doc""#));
         assert!(!page.contains("__HTML_DIFF_VIEW__"));
+    }
+}
+
+#[cfg(test)]
+mod target_tests {
+    use super::{query_value, split_target};
+
+    #[test]
+    fn targets_split_like_urlsplit() {
+        let split = |t: &str| split_target(t);
+        assert_eq!(split("/tok/api/closing?page=2#x"), ("/tok/api/closing".into(), "page=2".into()));
+        assert_eq!(split("http://127.0.0.1:9/tok/"), ("/tok/".into(), "".into()));
+        assert_eq!(split("//host/tok/?a=1"), ("/tok/".into(), "a=1".into()));
+        assert_eq!(split("/tok/a:b"), ("/tok/a:b".into(), "".into()));
+    }
+
+    #[test]
+    fn query_values_decode_like_parse_qs() {
+        assert_eq!(query_value("page=%32", "page").as_deref(), Some("2"));
+        assert_eq!(query_value("page=&page=3", "page").as_deref(), Some("3"));
+        assert_eq!(query_value("pa%67e=4", "page").as_deref(), Some("4"));
+        assert_eq!(query_value("page=1+2", "page").as_deref(), Some("1 2"));
+        assert_eq!(query_value("page", "page"), None);
+        assert_eq!(query_value("page=%zz", "page").as_deref(), Some("%zz"));
     }
 }

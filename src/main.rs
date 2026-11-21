@@ -156,7 +156,7 @@ pub fn dispatch(args: &Args, git: &dyn Git, launcher: &mut dyn commands::Launche
                     .with("valid", true)
                     .with("fingerprint", snapshot.fingerprint.as_str())
                     .with("repositories", Value::Array(request.repositories.iter().map(Repository::payload).collect())),
-            ));
+            ))?;
             return Ok(EXIT_OK);
         }
         let recovery = match recovery_dir(args) {

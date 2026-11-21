@@ -35,15 +35,27 @@ pub fn resolve_reviewer() -> String {
     HTML_REVIEWER.into()
 }
 
+/// Python's `int()` on ASCII input: an optional sign, then digits that may be
+/// grouped by single underscores.
+fn python_int(text: &str) -> Option<i128> {
+    let (negative, body) = match text.as_bytes().first() {
+        Some(b'-') => (true, &text[1..]),
+        Some(b'+') => (false, &text[1..]),
+        _ => (false, text),
+    };
+    let grouped = !body.is_empty()
+        && body.split('_').all(|group| !group.is_empty() && group.bytes().all(|b| b.is_ascii_digit()));
+    if !grouped {
+        return None;
+    }
+    let value: i128 = body.replace('_', "").parse().unwrap_or(i128::MAX);
+    Some(if negative { -value } else { value })
+}
+
 pub fn resolve_timeout() -> Result<Option<u64>> {
     let raw = std::env::var(TIMEOUT_ENV).unwrap_or_else(|_| DEFAULT_TIMEOUT_SECONDS.to_string());
     let trimmed = py_strip(&raw);
-    let digits = trimmed.strip_prefix('+').unwrap_or(trimmed).replace('_', "");
-    let parsed: Option<i128> = if trimmed.contains("__") || trimmed.ends_with('_') || trimmed.starts_with('_') {
-        None
-    } else {
-        digits.parse().ok()
-    };
+    let parsed = python_int(trimmed);
     let Some(seconds) = parsed else {
         return Err(Error::Usage(format!(
             "{TIMEOUT_ENV} must be a whole number of seconds: {}",
@@ -314,5 +326,20 @@ mod tests {
         assert_eq!(shlex_split(r#""a\b""#).unwrap(), vec!["a\\b"]);
         assert_eq!(shlex_split("  ").unwrap(), Vec::<String>::new());
         assert!(shlex_split("'open").is_err());
+    }
+}
+
+#[cfg(test)]
+mod timeout_tests {
+    use super::python_int;
+
+    #[test]
+    fn follows_python_int() {
+        for (text, expected) in [
+            ("5", Some(5)), ("+5", Some(5)), ("-5", Some(-5)), ("1_000", Some(1000)), ("007", Some(7)),
+            ("+_5", None), ("_5", None), ("5_", None), ("1__0", None), ("+-5", None), ("", None), ("5s", None),
+        ] {
+            assert_eq!(python_int(text), expected, "{text:?}");
+        }
     }
 }
