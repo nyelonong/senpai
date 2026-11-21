@@ -1,15 +1,19 @@
-"""The Rust client must agree with the Python client byte for byte.
+"""The Rust client must agree with the last Python client byte for byte.
 
-Runs only with ``SENPAI_BINARY`` set. Each case builds a repository state,
-runs both implementations on it, and requires identical output: fingerprints,
+The Python reference is extracted from git history at REFERENCE, so the
+comparison keeps running after the Python code left the tree; the test skips
+when that commit is not available. Each case builds a repository state, runs
+both implementations on it, and requires identical output: fingerprints,
 status reports, review-page payloads, and document renderings. Approvals
 recorded by one implementation must verify under the other.
 """
 from __future__ import annotations
 
+import atexit
 import json
 import os
 import random
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -19,14 +23,29 @@ import urllib.request
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT / "scripts"))
+REFERENCE = "7659d0c784c15cbb700e3a4fa6b445986beb6f2c"
 sys.path.insert(0, str(ROOT / "tests"))
 
 import commands  # noqa: E402
-import html_review  # noqa: E402
-import task_review  # noqa: E402
 
-PYTHON_CLIENT = [sys.executable, str(ROOT / "scripts/task_review.py")]
+
+def extract_reference() -> "Path | None":
+    archive = subprocess.run(["git", "-C", str(ROOT), "archive", REFERENCE, "scripts", "assets"],
+                             capture_output=True)
+    if archive.returncode != 0:
+        return None
+    folder = Path(tempfile.mkdtemp(prefix="senpai-reference-"))
+    atexit.register(shutil.rmtree, folder, True)
+    subprocess.run(["tar", "-x", "-C", str(folder)], input=archive.stdout, check=True)
+    return folder
+
+
+REFERENCE_DIR = extract_reference()
+if REFERENCE_DIR is not None:
+    sys.path.insert(0, str(REFERENCE_DIR / "scripts"))
+    import html_review  # noqa: E402
+    import task_review  # noqa: E402
+    PYTHON_CLIENT = [sys.executable, str(REFERENCE_DIR / "scripts/task_review.py")]
 GIT_ENV = {
     "GIT_CONFIG_GLOBAL": os.devnull,
     "GIT_CONFIG_SYSTEM": os.devnull,
@@ -67,7 +86,7 @@ def content(rng: random.Random) -> bytes:
     return ("x" * 200 + "\n").encode() * rng.randint(1, 30)
 
 
-@unittest.skipUnless(commands.BINARY, "set SENPAI_BINARY to compare the Rust client")
+@unittest.skipIf(REFERENCE_DIR is None, f"the Python reference {REFERENCE[:7]} is not in this clone")
 class RustParityTests(unittest.TestCase):
     def setUp(self) -> None:
         self._tmp = tempfile.TemporaryDirectory()

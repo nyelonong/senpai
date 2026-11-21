@@ -1176,7 +1176,73 @@ mod tests {
 
 #[cfg(test)]
 mod target_tests {
-    use super::{query_value, split_target};
+    use super::{build_guide, parse_patch, query_value, split_target};
+    use crate::json::{self, Value};
+
+    #[test]
+    fn guides_validate_like_the_recorded_python_client() {
+        let cases = json::loads_str(include_str!("../tests/golden/guides.json")).expect("golden JSON");
+        let cases = cases.as_array().expect("a list of cases");
+        assert!(!cases.is_empty());
+        for case in cases {
+            let args = case.get("args").and_then(Value::as_array).expect("args");
+            let function = case.get("function").and_then(Value::as_pystr).expect("function").display();
+            let produced = match function.as_str() {
+                "normalize_guide" => crate::request::normalize_guide(&args[0]),
+                "build_guide" => {
+                    let repositories: Vec<json::Object> = args[1]
+                        .as_array()
+                        .expect("repositories")
+                        .iter()
+                        .map(|r| r.as_object().expect("repository").clone())
+                        .collect();
+                    let guide = (!matches!(args[0], Value::Null)).then_some(&args[0]);
+                    build_guide(guide, &repositories)
+                }
+                other => panic!("unknown function {other}"),
+            };
+            let label = json::dumps(&Value::Array(args.clone()), json::SORTED);
+            match (case.get("output"), case.get("error"), produced) {
+                (Some(expected), None, Ok(value)) => {
+                    assert_eq!(json::dumps(expected, json::SORTED), json::dumps(&value, json::SORTED), "{function} {label}")
+                }
+                (None, Some(expected), Err(error)) => {
+                    assert_eq!(expected.as_pystr().expect("message").display(), error.message(), "{function} {label}")
+                }
+                (_, _, produced) => panic!("{function} {label}: expected {case:?}, produced {produced:?}"),
+            }
+        }
+    }
+
+    #[test]
+    fn patches_parse_like_the_recorded_python_reviewer() {
+        let cases = json::loads_str(include_str!("../tests/golden/patches.json")).expect("golden JSON");
+        let cases = cases.as_array().expect("a list of cases");
+        assert!(!cases.is_empty());
+        for case in cases {
+            let hex = case.get("input_hex").and_then(Value::as_pystr).expect("input").display();
+            let patch: Vec<u8> = (0..hex.len())
+                .step_by(2)
+                .map(|i| u8::from_str_radix(&hex[i..i + 2], 16).expect("hex"))
+                .collect();
+            let (lines, added, removed, binary) = parse_patch(&patch);
+            let produced = Value::Object(
+                json::Object::new()
+                    .with("lines", Value::Array(lines.iter().map(|line| line.payload()).collect()))
+                    .with("added", Value::Int(added as i128))
+                    .with("removed", Value::Int(removed as i128))
+                    .with("binary", binary),
+            );
+            let expected = Value::Object(
+                json::Object::new()
+                    .with("lines", case.get("lines").expect("lines").clone())
+                    .with("added", case.get("added").expect("added").clone())
+                    .with("removed", case.get("removed").expect("removed").clone())
+                    .with("binary", case.get("binary").expect("binary").clone()),
+            );
+            assert_eq!(json::dumps(&expected, json::SORTED), json::dumps(&produced, json::SORTED), "{hex}");
+        }
+    }
 
     #[test]
     fn targets_split_like_urlsplit() {

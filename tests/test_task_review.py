@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import contextlib
-import io
 import json
 import os
 from pathlib import Path
@@ -9,20 +7,15 @@ import stat
 import subprocess
 import sys
 import tempfile
+import time
 import selectors
 import signal
 import unittest
-from unittest import mock
+import urllib.request
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT / "scripts"))
-
-import task_review  # noqa: E402  (the client lives in scripts/ and is not a package)
-
 sys.path.insert(0, str(ROOT / "tests"))
 import commands  # noqa: E402
-
-CLIENT = ROOT / "scripts/task_review.py"
 
 APPROVE = '{"version":"1","review_id":"__REVIEW_ID__","decision":"approve","annotations":[]}'
 REJECT = (
@@ -36,9 +29,19 @@ STUB_LAUNCHER = r'''#!/usr/bin/env python3
 import json
 import os
 import sys
+import time
 
-assert sys.argv[1] == "--review", "the client must pass --review"
+assert sys.argv[1] in ("--review", "--review-doc"), "the client must pass --review or --review-doc"
 request = json.loads(sys.argv[2])
+if "STUB_REQUEST" in os.environ:
+    with open(os.environ["STUB_REQUEST"], "w", encoding="utf-8") as handle:
+        json.dump({"argv": sys.argv, "request": request}, handle)
+if "STUB_BLOCK" in os.environ:
+    # A directory where the client renames a file makes that write fail.
+    if os.path.isfile(os.environ["STUB_BLOCK"]):
+        os.unlink(os.environ["STUB_BLOCK"])
+    os.mkdir(os.environ["STUB_BLOCK"])
+time.sleep(float(os.environ.get("STUB_SLEEP", "0")))
 template = os.environ["STUB_RESULT"]
 if os.environ.get("STUB_SUBSTITUTE", "1") == "1":
     template = template.replace("__REVIEW_ID__", request["review_id"])
@@ -118,17 +121,17 @@ class ReviewCase(unittest.TestCase):
             "commit", "-q", "-m", message,
         )
 
-
-    def env(self, **extra: str) -> dict[str, str]:
+    def env(self, **extra: "str | None") -> dict[str, str]:
+        """The client environment; an extra value of None removes that variable."""
         base = {
             key: value
             for key, value in os.environ.items()
-            if key not in (task_review.LAUNCHER_ENV, task_review.TIMEOUT_ENV)
+            if key not in (commands.REVIEWER_ENV, commands.LAUNCHER_ENV, commands.TIMEOUT_ENV)
         }
         base.update(
             {
-                task_review.LAUNCHER_ENV: str(self.launcher),
-                task_review.TIMEOUT_ENV: "60",
+                commands.LAUNCHER_ENV: str(self.launcher),
+                commands.TIMEOUT_ENV: "60",
                 "GIT_CONFIG_GLOBAL": os.devnull,
                 "GIT_CONFIG_SYSTEM": os.devnull,
                 "GIT_TERMINAL_PROMPT": "0",
@@ -136,25 +139,26 @@ class ReviewCase(unittest.TestCase):
             }
         )
         base.update(extra)
-        return base
+        return {key: value for key, value in base.items() if value is not None}
 
-    def run_client(self, *args: str, cwd: "Path | None" = None, **env_extra: str) -> subprocess.CompletedProcess[str]:
+    def run_client(self, *args: str, cwd: "Path | None" = None, **env_extra: "str | None") -> subprocess.CompletedProcess[str]:
         return subprocess.run(
             [*commands.client(), *args],
             capture_output=True,
             text=True,
             env=self.env(**env_extra),
             cwd=None if cwd is None else str(cwd),
+            timeout=120,
         )
 
-    def review(self, *args: str, **env_extra: str) -> subprocess.CompletedProcess[str]:
+    def review(self, *args: str, **env_extra: "str | None") -> subprocess.CompletedProcess[str]:
         return self.run_client("review", "--criterion", "ship it", "--repo", str(self.root), *args, **env_extra)
 
-    def verify(self, *args: str, **env_extra: str) -> subprocess.CompletedProcess[str]:
+    def verify(self, *args: str, **env_extra: "str | None") -> subprocess.CompletedProcess[str]:
         return self.run_client("verify", "--repo", str(self.root), *args, **env_extra)
 
     def entries(self) -> list[dict]:
-        return task_review.read_entries(str(self.root / ".git" / task_review.LEDGER_NAME))
+        return commands.read_entries(self.root / ".git" / commands.LEDGER_NAME)
 
     def states(self) -> list[str]:
         return [entry.get("state") for entry in self.entries()]
@@ -167,19 +171,77 @@ class ReviewCase(unittest.TestCase):
         payload = json.loads(lines[0])
         self.assertIsInstance(payload, dict)
         return payload
-    @contextlib.contextmanager
-    def captured(self):
-        """Captures the in-process client's stdout and stderr."""
-        out, err = io.StringIO(), io.StringIO()
-        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
-            yield out, err
 
     def assertNoApproval(self, result: subprocess.CompletedProcess[str]) -> None:
         """Every failure path must leave the newest entry unapproved and empty stdout."""
-        self.assertEqual(task_review.EXIT_ERROR, result.returncode, result.stderr)
+        self.assertEqual(commands.EXIT_ERROR, result.returncode, result.stderr)
         self.assertEqual("", result.stdout, "a failing review must not print an approval")
         self.assertNotIn("approved", self.states()[-1:], f"an approval was recorded: {self.entries()}")
-        self.assertEqual(task_review.EXIT_NOT_APPROVED, self.verify().returncode)
+        self.assertEqual(commands.EXIT_NOT_APPROVED, self.verify().returncode)
+
+    def fingerprint(self, root: "Path | None" = None, paths: "list[str] | None" = None) -> str:
+        scope = ["--paths", ",".join(paths)] if paths is not None else []
+        result = self.run_client("preflight", "--criterion", "ship it", "--repo", str(root or self.root), *scope)
+        self.assertEqual(commands.EXIT_OK, result.returncode, result.stderr)
+        payload = self.assertSingleJsonLine(result)
+        self.assertTrue(payload["valid"])
+        return payload["fingerprint"]
+
+    def start_html(self, argv: list[str], **env_extra: "str | None") -> tuple[subprocess.Popen, str]:
+        """Starts argv with the bundled HTML reviewer and returns it with its page URL.
+
+        Output is read only after the process exits; reading stderr earlier can
+        deadlock against the reviewer's own pipe.
+        """
+        url_file = self.base / f"url-{time.monotonic_ns()}"
+        settings = {
+            commands.REVIEWER_ENV: "html",
+            commands.NO_BROWSER_ENV: "1",
+            commands.URL_FILE_ENV: str(url_file),
+            **env_extra,
+        }
+        process = subprocess.Popen(
+            argv, env=self.env(**settings), stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+        )
+
+        def cleanup() -> None:
+            if process.poll() is None:
+                process.kill()
+            process.communicate(timeout=30)
+
+        self.addCleanup(cleanup)
+        deadline = time.monotonic() + 30
+        while not url_file.exists() or not url_file.read_text().strip():
+            if process.poll() is not None:
+                self.fail(f"the HTML reviewer never published its page: {process.communicate()}")
+            self.assertLess(time.monotonic(), deadline, "the HTML reviewer never published its page")
+            time.sleep(0.05)
+        return process, url_file.read_text().strip()
+
+    @staticmethod
+    def served(url: str) -> dict:
+        with urllib.request.urlopen(url + "api/review", timeout=30) as response:
+            return json.loads(response.read())
+
+    @staticmethod
+    def decide(url: str, decision: str) -> None:
+        body = json.dumps({"decision": decision, "annotations": []}).encode()
+        request = urllib.request.Request(
+            url + "api/decision", data=body, method="POST", headers={"Content-Type": "application/json"},
+        )
+        urllib.request.urlopen(request, timeout=30).read()
+
+    def served_files(self, root: "Path | None" = None, paths: "list[str] | None" = None) -> list[dict]:
+        """The files the bundled reviewer shows for a repository and scope."""
+        repository: dict = {"root": str(root or self.root)}
+        if paths is not None:
+            repository["paths"] = paths
+        request = {"version": "1", "review_id": "files", "criterion": "ship it", "repositories": [repository]}
+        process, url = self.start_html([*commands.reviewer(), "--review", json.dumps(request)])
+        files = self.served(url)["repositories"][0]["files"]
+        self.decide(url, "cancelled")
+        process.communicate(timeout=30)
+        return files
 
 
 class RequestValidationTests(ReviewCase):
@@ -233,7 +295,7 @@ class RequestValidationTests(ReviewCase):
         for label, argv in cases.items():
             with self.subTest(case=label):
                 result = self.run_client(*argv)
-                self.assertEqual(task_review.EXIT_ERROR, result.returncode, result.stderr)
+                self.assertEqual(commands.EXIT_ERROR, result.returncode, result.stderr)
                 self.assertEqual("", result.stdout)
         self.assertNoApproval(self.run_client("consume"))
 
@@ -243,93 +305,92 @@ class RequestValidationTests(ReviewCase):
         link = Path(self.root).parent / "link"
         link.symlink_to(self.root)
         result = self.run_client("status", "--repo", str(link))
-        self.assertEqual(task_review.EXIT_NOT_APPROVED, result.returncode, result.stderr)
+        self.assertEqual(commands.EXIT_NOT_APPROVED, result.returncode, result.stderr)
         self.assertEqual(str(self.root), self.assertSingleJsonLine(result)["repositories"][0]["root"])
 
 
 class FingerprintTests(ReviewCase):
-    def repositories(self, paths=None):
-        return [task_review.Repository(root=str(self.root), paths=paths)]
-
     def test_fingerprint_is_stable_for_an_unchanged_tree(self) -> None:
-        first = task_review.collect_snapshot(self.repositories())
-        second = task_review.collect_snapshot(self.repositories())
-        self.assertEqual(first.fingerprint, second.fingerprint)
-        self.assertEqual(64, len(first.fingerprint))
+        first = self.fingerprint()
+        self.assertEqual(first, self.fingerprint())
+        self.assertEqual(64, len(first))
 
     def test_fingerprint_changes_with_content(self) -> None:
-        before = task_review.collect_snapshot(self.repositories()).fingerprint
+        before = self.fingerprint()
         self.write("a.py", "print('three')\n")
-        self.assertNotEqual(before, task_review.collect_snapshot(self.repositories()).fingerprint)
+        self.assertNotEqual(before, self.fingerprint())
 
     def test_fingerprint_changes_with_an_untracked_file(self) -> None:
-        before = task_review.collect_snapshot(self.repositories()).fingerprint
+        before = self.fingerprint()
         self.write("untracked.txt", "different content\n")
-        self.assertNotEqual(before, task_review.collect_snapshot(self.repositories()).fingerprint)
+        self.assertNotEqual(before, self.fingerprint())
 
     def test_fingerprint_changes_with_a_binary_untracked_file(self) -> None:
-        before = task_review.collect_snapshot(self.repositories()).fingerprint
+        before = self.fingerprint()
         (self.root / "blob.bin").write_bytes(b"\x00\x01\x02binary\x00")
-        after_first = task_review.collect_snapshot(self.repositories()).fingerprint
+        after_first = self.fingerprint()
         self.assertNotEqual(before, after_first)
         (self.root / "blob.bin").write_bytes(b"\x00\x01\x02different\x00")
-        self.assertNotEqual(after_first, task_review.collect_snapshot(self.repositories()).fingerprint)
+        self.assertNotEqual(after_first, self.fingerprint())
 
     def test_fingerprint_changes_with_a_symlink_target(self) -> None:
         link = self.root / "link"
         link.symlink_to("a.py")
-        before = task_review.collect_snapshot(self.repositories()).fingerprint
+        before = self.fingerprint()
         link.unlink()
         link.symlink_to("other/b.txt")
-        self.assertNotEqual(before, task_review.collect_snapshot(self.repositories()).fingerprint)
+        self.assertNotEqual(before, self.fingerprint())
 
     def test_fingerprint_changes_with_a_rename(self) -> None:
-        before = task_review.collect_snapshot(self.repositories()).fingerprint
+        before = self.fingerprint()
         (self.root / "a.py").rename(self.root / "renamed.py")
-        self.assertNotEqual(before, task_review.collect_snapshot(self.repositories()).fingerprint)
+        self.assertNotEqual(before, self.fingerprint())
 
     def test_fingerprint_changes_with_a_new_baseline(self) -> None:
-        before = task_review.collect_snapshot(self.repositories()).fingerprint
+        before = self.fingerprint()
         self.commit("second")
-        after = task_review.collect_snapshot(self.repositories())
-        self.assertNotEqual(before, after.fingerprint, "the baseline is part of the fingerprint")
-        self.assertEqual([], list(after.repositories[0].files))
+        self.assertNotEqual(before, self.fingerprint(), "the baseline is part of the fingerprint")
+        self.assertEqual([], self.served_files())
 
     def test_fingerprint_uses_the_empty_tree_for_an_unborn_repository(self) -> None:
-        empty = Path(os.path.realpath(self._tmp.name)) / "unborn"
+        empty = self.base / "unborn"
         (empty / "src").mkdir(parents=True)
         subprocess.run(["git", "init", "-q", str(empty)], check=True, capture_output=True)
-        self.assertEqual(
-            task_review.EMPTY_TREE,
-            task_review.collect_repository(task_review.Repository(root=str(empty))).baseline,
-        )
+        self.assertEqual(64, len(self.fingerprint(empty)))
         (empty / "src" / "a.py").write_text("x\n", encoding="utf-8")
-        self.assertNotEqual("", task_review.collect_snapshot([task_review.Repository(root=str(empty))]).fingerprint)
+        self.git_at(empty, "add", "src/a.py")
+        # A staged file can only be diffed when the baseline is a real tree.
+        files = self.served_files(empty)
+        self.assertEqual(["src/a.py"], [file["path"] for file in files])
+        self.assertIn("new file mode 100644", [line["text"] for line in files[0]["lines"]])
+        self.assertEqual(64, len(self.fingerprint(empty)))
 
     def test_scope_limits_the_snapshot(self) -> None:
-        scoped = self.repositories(["a.py"])
-        paths = [file.path for file in task_review.collect_snapshot(scoped).repositories[0].files]
-        self.assertEqual(["a.py"], paths)
-        every = [file.path for file in task_review.collect_snapshot(self.repositories()).repositories[0].files]
-        self.assertEqual(["a.py", "other/b.txt", "untracked.txt"], every)
+        self.assertEqual(["a.py"], [file["path"] for file in self.served_files(paths=["a.py"])])
+        self.assertEqual(
+            ["a.py", "other/b.txt", "untracked.txt"], [file["path"] for file in self.served_files()],
+        )
+        scoped = self.fingerprint(paths=["a.py"])
+        self.write("other/b.txt", "out of scope\n")
+        self.assertEqual(scoped, self.fingerprint(paths=["a.py"]))
 
     def test_scope_matches_a_directory_prefix_only(self) -> None:
-        files = task_review.collect_snapshot(self.repositories(["other"])).repositories[0].files
-        self.assertEqual(["other/b.txt"], [file.path for file in files])
+        self.write("otherwise.txt", "shares a prefix\n")
+        self.assertEqual(["other/b.txt"], [file["path"] for file in self.served_files(paths=["other"])])
 
 
 class ApprovalFlowTests(ReviewCase):
     def test_approve_records_a_verifiable_approval(self) -> None:
         result = self.review()
         payload = self.assertSingleJsonLine(result)
-        self.assertEqual(task_review.EXIT_OK, result.returncode, result.stderr)
+        self.assertEqual(commands.EXIT_OK, result.returncode, result.stderr)
         self.assertEqual("approve", payload["decision"])
-        self.assertEqual(task_review.PROTOCOL_VERSION, payload["version"])
+        self.assertEqual(commands.PROTOCOL_VERSION, payload["version"])
 
         entries = self.entries()
         self.assertEqual(["superseded", "approved"], [entry["state"] for entry in entries])
         for entry in entries:
-            self.assertEqual(task_review.PRODUCER, entry["producer"])
+            self.assertEqual(commands.PRODUCER, entry["producer"])
             self.assertEqual("ship it", entry["criterion"])
             self.assertEqual([{"root": str(self.root)}], entry["repositories"])
             self.assertRegex(entry["ts"], r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$")
@@ -339,7 +400,7 @@ class ApprovalFlowTests(ReviewCase):
         self.assertNotIn("error", approved)
 
         verified = self.verify()
-        self.assertEqual(task_review.EXIT_OK, verified.returncode, verified.stderr)
+        self.assertEqual(commands.EXIT_OK, verified.returncode, verified.stderr)
         self.assertEqual(
             {"approved": True, "fingerprint": approved["fingerprint"], "state": "approved",
              "reason": "the approval matches the current state"},
@@ -348,7 +409,7 @@ class ApprovalFlowTests(ReviewCase):
 
     def test_ledger_is_private(self) -> None:
         self.review()
-        mode = stat.S_IMODE(os.stat(self.root / ".git" / task_review.LEDGER_NAME).st_mode)
+        mode = stat.S_IMODE(os.stat(self.root / ".git" / commands.LEDGER_NAME).st_mode)
         self.assertEqual(0o600, mode)
 
     def test_request_changes_and_cancellation_do_not_approve(self) -> None:
@@ -363,12 +424,12 @@ class ApprovalFlowTests(ReviewCase):
                     % (decision, annotations)
                 )
                 result = self.review(STUB_RESULT=template)
-                self.assertEqual(task_review.EXIT_NOT_APPROVED, result.returncode, result.stderr)
+                self.assertEqual(commands.EXIT_NOT_APPROVED, result.returncode, result.stderr)
                 payload = self.assertSingleJsonLine(result)
                 self.assertEqual(decision, payload["decision"])
                 self.assertEqual(["superseded", state], self.states()[-2:])
                 self.assertEqual(decision, self.entries()[-1]["decision"])
-                self.assertEqual(task_review.EXIT_NOT_APPROVED, self.verify().returncode)
+                self.assertEqual(commands.EXIT_NOT_APPROVED, self.verify().returncode)
                 self.assertNotIn("approved", self.states())
 
     def test_mid_review_change_is_rejected_after_approval(self) -> None:
@@ -381,7 +442,7 @@ class ApprovalFlowTests(ReviewCase):
     def test_status_reports_the_newest_entry(self) -> None:
         self.review()
         status = self.run_client("status", "--repo", str(self.root))
-        self.assertEqual(task_review.EXIT_OK, status.returncode, status.stderr)
+        self.assertEqual(commands.EXIT_OK, status.returncode, status.stderr)
         payload = self.assertSingleJsonLine(status)
         self.assertTrue(payload["approved"])
         self.assertEqual("approved", payload["state"])
@@ -390,7 +451,7 @@ class ApprovalFlowTests(ReviewCase):
 
     def test_status_before_any_review(self) -> None:
         status = self.run_client("status", "--repo", str(self.root))
-        self.assertEqual(task_review.EXIT_NOT_APPROVED, status.returncode, status.stderr)
+        self.assertEqual(commands.EXIT_NOT_APPROVED, status.returncode, status.stderr)
         payload = self.assertSingleJsonLine(status)
         self.assertIsNone(payload["entry"])
         self.assertIn("no task review approval", payload["reason"])
@@ -403,10 +464,10 @@ class ApprovalFlowTests(ReviewCase):
             "repositories": [{"root": str(self.root), "paths": ["a.py"]}],
         }
         result = self.run_client("review", "--json", json.dumps(payload))
-        self.assertEqual(task_review.EXIT_OK, result.returncode, result.stderr)
+        self.assertEqual(commands.EXIT_OK, result.returncode, result.stderr)
         self.assertEqual("fixed-review-id", self.assertSingleJsonLine(result)["review_id"])
         self.assertEqual([{"root": str(self.root), "paths": ["a.py"]}], self.entries()[-1]["repositories"])
-        self.assertEqual(task_review.EXIT_OK, self.verify("--paths", "a.py").returncode)
+        self.assertEqual(commands.EXIT_OK, self.verify("--paths", "a.py").returncode)
 
     def test_verify_from_a_json_request(self) -> None:
         payload = {
@@ -414,7 +475,7 @@ class ApprovalFlowTests(ReviewCase):
             "repositories": [{"root": str(self.root), "paths": ["a.py"]}],
         }
         result = self.run_client("verify", "--json", json.dumps(payload))
-        self.assertEqual(task_review.EXIT_NOT_APPROVED, result.returncode, result.stderr)
+        self.assertEqual(commands.EXIT_NOT_APPROVED, result.returncode, result.stderr)
         self.assertFalse(self.assertSingleJsonLine(result)["approved"])
 
 
@@ -488,17 +549,17 @@ class FailClosedResultTests(ReviewCase):
 
 class LedgerTests(ReviewCase):
     def append_raw(self, line: str) -> None:
-        path = self.root / ".git" / task_review.LEDGER_NAME
+        path = self.root / ".git" / commands.LEDGER_NAME
         with open(path, "a", encoding="utf-8") as handle:
             handle.write(line + "\n")
 
     def test_newest_entry_wins(self) -> None:
         self.review()
-        self.assertEqual(task_review.EXIT_OK, self.verify().returncode)
+        self.assertEqual(commands.EXIT_OK, self.verify().returncode)
         self.review(STUB_RESULT=REJECT)
-        self.assertEqual(task_review.EXIT_NOT_APPROVED, self.verify().returncode)
+        self.assertEqual(commands.EXIT_NOT_APPROVED, self.verify().returncode)
         self.review()
-        self.assertEqual(task_review.EXIT_OK, self.verify().returncode)
+        self.assertEqual(commands.EXIT_OK, self.verify().returncode)
         self.assertEqual(
             ["superseded", "approved", "superseded", "rejected", "superseded", "approved"],
             self.states(),
@@ -507,9 +568,9 @@ class LedgerTests(ReviewCase):
     def test_malformed_ledger_lines_are_skipped(self) -> None:
         self.review()
         self.append_raw("{not json at all")
-        self.assertEqual(task_review.EXIT_OK, self.verify().returncode)
+        self.assertEqual(commands.EXIT_OK, self.verify().returncode)
         self.append_raw("[]")
-        self.assertEqual(task_review.EXIT_OK, self.verify().returncode)
+        self.assertEqual(commands.EXIT_OK, self.verify().returncode)
         self.assertEqual(2, len(self.entries()), "malformed lines are skipped, not counted")
 
     def test_producer_mismatch_never_validates(self) -> None:
@@ -517,35 +578,35 @@ class LedgerTests(ReviewCase):
         approved = self.entries()[-1]
         self.append_raw(json.dumps({**approved, "producer": "pi-rdg-task-review"}))
         result = self.verify()
-        self.assertEqual(task_review.EXIT_NOT_APPROVED, result.returncode, result.stderr)
-        self.assertIn(task_review.PRODUCER, self.assertSingleJsonLine(result)["reason"])
+        self.assertEqual(commands.EXIT_NOT_APPROVED, result.returncode, result.stderr)
+        self.assertIn(commands.PRODUCER, self.assertSingleJsonLine(result)["reason"])
 
     def test_fingerprint_mismatch_never_validates(self) -> None:
         self.review()
         self.append_raw(json.dumps({**self.entries()[-1], "fingerprint": "0" * 64}))
         result = self.verify()
-        self.assertEqual(task_review.EXIT_NOT_APPROVED, result.returncode, result.stderr)
+        self.assertEqual(commands.EXIT_NOT_APPROVED, result.returncode, result.stderr)
         self.assertIn("changed since", self.assertSingleJsonLine(result)["reason"])
 
     def test_verify_fails_after_any_worktree_change(self) -> None:
         self.review()
-        self.assertEqual(task_review.EXIT_OK, self.verify().returncode)
+        self.assertEqual(commands.EXIT_OK, self.verify().returncode)
         self.write("a.py", "print('changed after approval')\n")
-        self.assertEqual(task_review.EXIT_NOT_APPROVED, self.verify().returncode)
+        self.assertEqual(commands.EXIT_NOT_APPROVED, self.verify().returncode)
         self.write("extra.txt", "a new file\n")
-        self.assertEqual(task_review.EXIT_NOT_APPROVED, self.verify().returncode)
+        self.assertEqual(commands.EXIT_NOT_APPROVED, self.verify().returncode)
         (self.root / "extra.txt").unlink()
         self.write("a.py", "print('two')\n")
-        self.assertEqual(task_review.EXIT_OK, self.verify().returncode, "restoring the state restores the approval")
+        self.assertEqual(commands.EXIT_OK, self.verify().returncode, "restoring the state restores the approval")
 
     def test_consume_after_approve_makes_verify_fail(self) -> None:
         self.review()
-        self.assertEqual(task_review.EXIT_OK, self.verify().returncode)
+        self.assertEqual(commands.EXIT_OK, self.verify().returncode)
         consumed = self.run_client("consume", "--repo", str(self.root))
-        self.assertEqual(task_review.EXIT_OK, consumed.returncode, consumed.stderr)
+        self.assertEqual(commands.EXIT_OK, consumed.returncode, consumed.stderr)
         self.assertEqual("consumed", self.assertSingleJsonLine(consumed)["state"])
         result = self.verify()
-        self.assertEqual(task_review.EXIT_NOT_APPROVED, result.returncode, result.stderr)
+        self.assertEqual(commands.EXIT_NOT_APPROVED, result.returncode, result.stderr)
         self.assertIn("consumed", self.assertSingleJsonLine(result)["reason"])
         # The approval was spent, not erased: the record survives for the audit.
         self.assertEqual(["superseded", "approved", "consumed"], self.states())
@@ -554,47 +615,47 @@ class LedgerTests(ReviewCase):
     def test_revoke_after_approve_makes_verify_fail(self) -> None:
         self.review()
         revoked = self.run_client("revoke", "--repo", str(self.root))
-        self.assertEqual(task_review.EXIT_OK, revoked.returncode, revoked.stderr)
+        self.assertEqual(commands.EXIT_OK, revoked.returncode, revoked.stderr)
         self.assertEqual("superseded", self.assertSingleJsonLine(revoked)["state"])
-        self.assertEqual(task_review.EXIT_NOT_APPROVED, self.verify().returncode)
+        self.assertEqual(commands.EXIT_NOT_APPROVED, self.verify().returncode)
 
     def test_a_failing_review_revokes_a_previous_approval(self) -> None:
         self.review()
-        self.assertEqual(task_review.EXIT_OK, self.verify().returncode)
+        self.assertEqual(commands.EXIT_OK, self.verify().returncode)
         self.assertNoApproval(self.review(STUB_MODE="garbage"))
-        self.assertEqual(task_review.EXIT_NOT_APPROVED, self.verify().returncode)
+        self.assertEqual(commands.EXIT_NOT_APPROVED, self.verify().returncode)
 
     def test_scope_narrows_what_invalidates_an_approval(self) -> None:
         self.review("--paths", "a.py")
-        self.assertEqual(task_review.EXIT_OK, self.verify("--paths", "a.py").returncode)
+        self.assertEqual(commands.EXIT_OK, self.verify("--paths", "a.py").returncode)
         self.write("other/b.txt", "out of scope change\n")
         scoped = self.verify("--paths", "a.py")
-        self.assertEqual(task_review.EXIT_OK, scoped.returncode, scoped.stderr)
+        self.assertEqual(commands.EXIT_OK, scoped.returncode, scoped.stderr)
         unscoped = self.verify()
-        self.assertEqual(task_review.EXIT_NOT_APPROVED, unscoped.returncode, unscoped.stderr)
+        self.assertEqual(commands.EXIT_NOT_APPROVED, unscoped.returncode, unscoped.stderr)
         self.write("a.py", "print('in scope')\n")
-        self.assertEqual(task_review.EXIT_NOT_APPROVED, self.verify("--paths", "a.py").returncode)
+        self.assertEqual(commands.EXIT_NOT_APPROVED, self.verify("--paths", "a.py").returncode)
 
     def test_every_repository_needs_an_approval(self) -> None:
         other = self.make_repo("second")
         (other / "a.py").write_text("print('changed')\n", encoding="utf-8")
         both = ["--repo", str(self.root), "--repo", str(other)]
         result = self.run_client("review", "--criterion", "ship both", *both)
-        self.assertEqual(task_review.EXIT_OK, result.returncode, result.stderr)
+        self.assertEqual(commands.EXIT_OK, result.returncode, result.stderr)
         for root in (self.root, other):
-            entries = task_review.read_entries(str(root / ".git" / task_review.LEDGER_NAME))
+            entries = commands.read_entries(root / ".git" / commands.LEDGER_NAME)
             self.assertEqual(["superseded", "approved"], [entry["state"] for entry in entries])
-        self.assertEqual(task_review.EXIT_OK, self.run_client("verify", *both).returncode)
+        self.assertEqual(commands.EXIT_OK, self.run_client("verify", *both).returncode)
 
         # One spent approval is enough to fail the whole set.
         self.run_client("consume", "--repo", str(other))
         both_roots = self.run_client("verify", *both)
-        self.assertEqual(task_review.EXIT_NOT_APPROVED, both_roots.returncode, both_roots.stderr)
+        self.assertEqual(commands.EXIT_NOT_APPROVED, both_roots.returncode, both_roots.stderr)
         self.assertIn("consumed", self.assertSingleJsonLine(both_roots)["reason"])
         # The fingerprint covers the whole reviewed set, so one repository on
         # its own never validates an approval recorded for two.
         single = self.verify()
-        self.assertEqual(task_review.EXIT_NOT_APPROVED, single.returncode, single.stderr)
+        self.assertEqual(commands.EXIT_NOT_APPROVED, single.returncode, single.stderr)
         self.assertIn("changed since", self.assertSingleJsonLine(single)["reason"])
 
     def test_consume_and_revoke_accept_every_reviewed_repository(self) -> None:
@@ -602,159 +663,142 @@ class LedgerTests(ReviewCase):
         (other / "a.py").write_text("print('changed')\n", encoding="utf-8")
         both = ["--repo", str(self.root), "--repo", str(other)]
         for command, state in (("consume", "consumed"), ("revoke", "superseded")):
-            self.assertEqual(task_review.EXIT_OK, self.run_client("review", "--criterion", "ship both", *both).returncode)
+            self.assertEqual(commands.EXIT_OK, self.run_client("review", "--criterion", "ship both", *both).returncode)
             closed = self.run_client(command, *both)
-            self.assertEqual(task_review.EXIT_OK, closed.returncode, closed.stderr)
+            self.assertEqual(commands.EXIT_OK, closed.returncode, closed.stderr)
             self.assertEqual(state, self.assertSingleJsonLine(closed)["state"])
-            self.assertEqual(task_review.EXIT_NOT_APPROVED, self.run_client("verify", *both).returncode)
+            self.assertEqual(commands.EXIT_NOT_APPROVED, self.run_client("verify", *both).returncode)
 
     def test_status_falls_back_to_the_working_directory(self) -> None:
         self.review()
         status = self.run_client("status", cwd=self.root)
-        self.assertEqual(task_review.EXIT_OK, status.returncode, status.stderr)
+        self.assertEqual(commands.EXIT_OK, status.returncode, status.stderr)
         self.assertEqual(str(self.root), self.assertSingleJsonLine(status)["repositories"][0]["root"])
 
 
-class InjectionTests(ReviewCase):
-    """The git and launcher seams are replaceable, so a test never needs RDG."""
+class LauncherTests(ReviewCase):
+    """The reviewer is a separate process, so a test never needs RDG."""
 
-    def test_injected_launcher_and_git_runners_drive_the_review(self) -> None:
-        seen: dict[str, object] = {}
+    def test_the_reviewer_receives_the_request_and_drives_the_review(self) -> None:
+        seen = self.base / "seen.json"
+        result = self.review(STUB_REQUEST=str(seen), **{commands.TIMEOUT_ENV: "0"})
+        self.assertEqual(commands.EXIT_OK, result.returncode, result.stderr)
+        self.assertEqual("approve", self.assertSingleJsonLine(result)["decision"])
+        recorded = json.loads(seen.read_text())
+        self.assertEqual([str(self.launcher), "--review"], recorded["argv"][:2])
+        request = recorded["request"]
+        self.assertEqual(commands.PROTOCOL_VERSION, request["version"])
+        self.assertEqual("ship it", request["criterion"])
+        self.assertEqual([{"root": str(self.root)}], request["repositories"])
+        self.assertEqual(request["review_id"], self.assertSingleJsonLine(result)["review_id"])
+        self.assertEqual(commands.EXIT_OK, self.verify().returncode)
 
-        def fake_launch(launcher: str, request_json: str, timeout: "int | None") -> bytes:
-            seen["launcher"] = launcher
-            seen["request"] = json.loads(request_json)
-            seen["timeout"] = timeout
-            return (
-                json.dumps(
-                    {
-                        "version": "1",
-                        "review_id": seen["request"]["review_id"],
-                        "decision": "approve",
-                        "annotations": [],
-                    }
-                )
-                + "\n"
-            ).encode()
-
-        git = task_review.run_git
-        calls: list[str] = []
-
-        def counting_git(root: str, args, *, allowed_codes=(0,)):
-            calls.append(args[0])
-            return git(root, args, allowed_codes=allowed_codes)
-
-        with self.captured() as (out, _):
-            code = task_review.main(
-                ["review", "--criterion", "ship it", "--repo", str(self.root)],
-                {task_review.LAUNCHER_ENV: "/nonexistent/rdg", task_review.TIMEOUT_ENV: "0"},
-                git=counting_git,
-                launch=fake_launch,
-            )
-        self.assertEqual(task_review.EXIT_OK, code)
-        self.assertEqual("approve", json.loads(out.getvalue())["decision"])
-        self.assertEqual("/nonexistent/rdg", seen["launcher"])
-        self.assertIsNone(seen["timeout"])
-        self.assertEqual(str(self.root), seen["request"]["repositories"][0]["root"])
-        self.assertIn("rev-parse", calls)
-        self.assertIn("status", calls)
-        self.assertIn("diff", calls)
-        self.assertEqual(task_review.EXIT_OK, self.verify().returncode)
-
-    def test_injected_launcher_failure_is_an_error(self) -> None:
-        def failing_launch(launcher: str, request_json: str, timeout: "int | None") -> bytes:
-            raise task_review.LauncherError("no review window")
-
-        with self.captured() as (_, err):
-            code = task_review.main(
-                ["review", "--criterion", "ship it", "--repo", str(self.root)],
-                {},
-                launch=failing_launch,
-            )
-        self.assertIn("no review window", err.getvalue())
-        self.assertEqual(task_review.EXIT_ERROR, code)
+    def test_reviewer_failure_is_recorded_as_an_error(self) -> None:
+        result = self.review(STUB_MODE="fail")
+        self.assertNoApproval(result)
         self.assertEqual("error", self.states()[-1])
-        self.assertIn("no review window", self.entries()[-1]["error"])
+        self.assertIn("not open or is not a Git worktree", self.entries()[-1]["error"])
 
 
 class TimeoutTests(ReviewCase):
     def test_timeout_environment(self) -> None:
-        self.assertEqual(1800, task_review.resolve_timeout({}))
-        self.assertEqual(5, task_review.resolve_timeout({task_review.TIMEOUT_ENV: "5"}))
-        self.assertIsNone(task_review.resolve_timeout({task_review.TIMEOUT_ENV: "0"}))
-        for value in ("-1", "soon"):
+        for value, message in (("-1", "must not be negative"), ("soon", "must be a whole number")):
             with self.subTest(value=value):
-                with self.assertRaises(task_review.TaskReviewError):
-                    task_review.resolve_timeout({task_review.TIMEOUT_ENV: value})
+                result = self.review(**{commands.TIMEOUT_ENV: value})
+                self.assertNoApproval(result)
+                self.assertIn(commands.TIMEOUT_ENV, result.stderr)
+                self.assertIn(message, result.stderr)
+        for value in ("5", "0"):
+            with self.subTest(value=value):
+                result = self.review(**{commands.TIMEOUT_ENV: value})
+                self.assertEqual(commands.EXIT_OK, result.returncode, result.stderr)
+
+    def test_a_reviewer_that_outlives_the_timeout_is_an_error(self) -> None:
+        result = self.review(STUB_SLEEP="10", **{commands.TIMEOUT_ENV: "1"})
+        self.assertNoApproval(result)
+        self.assertIn("timed out before a human decided", result.stderr)
 
     def test_launcher_failure_on_a_missing_binary(self) -> None:
         result = self.run_client(
             "review", "--criterion", "x", "--repo", str(self.root),
-            **{task_review.LAUNCHER_ENV: "/nonexistent/rdg"},
+            **{commands.LAUNCHER_ENV: "/nonexistent/rdg"},
         )
         self.assertNoApproval(result)
         self.assertIn("unable to run the reviewer", result.stderr)
 
 
 class PackagingTests(unittest.TestCase):
-    def test_client_is_executable_and_uses_the_standard_library_only(self) -> None:
-        self.assertTrue(os.access(CLIENT, os.X_OK), "scripts/task_review.py must be executable")
-        third_party = {
-            name.split(".")[0]
-            for name in sys.modules
-            if getattr(sys.modules.get(name), "__file__", "") and "site-packages" in sys.modules[name].__file__
-        }
-        self.assertEqual(set(), {name for name in third_party if name == task_review.__name__})
-        source = CLIENT.read_text(encoding="utf-8")
-        for banned in ("import requests", "import yaml", "pip install", "urllib.request"):
-            self.assertNotIn(banned, source, f"the client must stay dependency-free: {banned}")
+    def test_client_is_an_executable_file(self) -> None:
+        self.assertTrue(Path(commands.BINARY).is_file(), f"build the client first: {commands.BINARY}")
+        self.assertTrue(os.access(commands.BINARY, os.X_OK), f"{commands.BINARY} must be executable")
 
     def test_client_reports_usage_without_a_subcommand(self) -> None:
         completed = subprocess.run(commands.client(), capture_output=True, text=True)
-        self.assertEqual(task_review.EXIT_ERROR, completed.returncode)
+        self.assertEqual(commands.EXIT_ERROR, completed.returncode)
         self.assertEqual("", completed.stdout)
         self.assertIn("usage:", completed.stderr)
 
-class ReviewerResolutionTests(unittest.TestCase):
+
+class ReviewerResolutionTests(ReviewCase):
     """The reviewer is pluggable; the bundled HTML reviewer is the default."""
 
+    def assertHtmlReviewerRuns(self, **env_extra: "str | None") -> None:
+        process, url = self.start_html(
+            [*commands.client(), "review", "--criterion", "ship it", "--repo", str(self.root)], **env_extra,
+        )
+        self.assertEqual(["a.py", "other/b.txt", "untracked.txt"],
+                         [file["path"] for file in self.served(url)["repositories"][0]["files"]])
+        self.decide(url, "cancelled")
+        stdout, stderr = process.communicate(timeout=30)
+        self.assertEqual(commands.EXIT_NOT_APPROVED, process.returncode, stderr)
+        self.assertEqual("cancelled", json.loads(stdout)["decision"])
+        self.assertEqual("cancelled", self.states()[-1])
+
     def test_html_is_the_default_reviewer(self) -> None:
-        self.assertEqual(task_review.HTML_REVIEWER, task_review.DEFAULT_REVIEWER)
-        self.assertEqual(task_review.HTML_REVIEWER, task_review.resolve_reviewer({}))
+        self.assertHtmlReviewerRuns(**{commands.REVIEWER_ENV: None, commands.LAUNCHER_ENV: None})
 
-    def test_html_reviewer_resolves_to_the_bundled_script(self) -> None:
-        command = task_review.resolve_launcher_command(task_review.HTML_REVIEWER)
-        self.assertEqual(2, len(command))
-        self.assertEqual(sys.executable, command[0])
-        self.assertEqual(ROOT / "scripts/html_review.py", Path(command[1]))
-        self.assertTrue(Path(command[1]).is_file(), "the default reviewer must ship with the client")
+    def test_reviewer_named_html_runs_the_bundled_page(self) -> None:
+        self.assertHtmlReviewerRuns(**{commands.REVIEWER_ENV: "html", commands.LAUNCHER_ENV: "/nonexistent/rdg"})
 
-    def test_rdg_reviewer_resolves_to_the_binary(self) -> None:
-        self.assertEqual(["rdg"], task_review.resolve_launcher_command(task_review.RDG_REVIEWER))
+    def test_rdg_reviewer_resolves_to_the_binary_on_the_path(self) -> None:
+        tools = self.base / "tools"
+        tools.mkdir()
+        (tools / "rdg").write_text(STUB_LAUNCHER, encoding="utf-8")
+        (tools / "rdg").chmod(0o755)
+        seen = self.base / "seen.json"
+        result = self.review(
+            STUB_REQUEST=str(seen),
+            PATH=f"{tools}{os.pathsep}{os.environ.get('PATH', '')}",
+            **{commands.REVIEWER_ENV: "rdg"},
+        )
+        self.assertEqual(commands.EXIT_OK, result.returncode, result.stderr)
+        self.assertEqual("rdg", json.loads(seen.read_text())["argv"][0].rsplit("/", 1)[-1])
 
     def test_reviewer_environment_wins_over_the_legacy_variable(self) -> None:
-        environ = {task_review.REVIEWER_ENV: "rdg", task_review.LAUNCHER_ENV: "/legacy/reviewer"}
-        self.assertEqual("rdg", task_review.resolve_reviewer(environ))
+        result = self.review(**{commands.REVIEWER_ENV: str(self.launcher), commands.LAUNCHER_ENV: "/legacy/reviewer"})
+        self.assertEqual(commands.EXIT_OK, result.returncode, result.stderr)
+        result = self.review(**{commands.REVIEWER_ENV: "/nonexistent/reviewer", commands.LAUNCHER_ENV: str(self.launcher)})
+        self.assertNoApproval(result)
+        self.assertIn("unable to run the reviewer", result.stderr)
 
     def test_legacy_reviewer_variable_is_still_honored(self) -> None:
-        self.assertEqual(
-            "/legacy/reviewer",
-            task_review.resolve_reviewer({task_review.LAUNCHER_ENV: "/legacy/reviewer"}),
-        )
+        result = self.review(**{commands.REVIEWER_ENV: None, commands.LAUNCHER_ENV: str(self.launcher)})
+        self.assertEqual(commands.EXIT_OK, result.returncode, result.stderr)
+        result = self.review(**{commands.REVIEWER_ENV: None, commands.LAUNCHER_ENV: "/legacy/reviewer"})
+        self.assertNoApproval(result)
+        self.assertIn("unable to run the reviewer", result.stderr)
 
     def test_blank_reviewer_values_fall_through(self) -> None:
-        self.assertEqual(
-            task_review.HTML_REVIEWER,
-            task_review.resolve_reviewer({task_review.REVIEWER_ENV: "   ", task_review.LAUNCHER_ENV: ""}),
-        )
+        self.assertHtmlReviewerRuns(**{commands.REVIEWER_ENV: "   ", commands.LAUNCHER_ENV: ""})
 
     def test_an_explicit_launcher_path_still_wins(self) -> None:
-        with tempfile.TemporaryDirectory() as directory:
-            launcher = Path(directory) / "reviewer"
-            launcher.write_text("#!/bin/sh\n", encoding="utf-8")
-            self.assertEqual([str(launcher)], task_review.resolve_launcher_command(str(launcher)))
-
-
+        # A path with a space only works if it is used as-is, not split into words.
+        spaced = self.base / "reviewer dir" / "reviewer"
+        spaced.parent.mkdir()
+        spaced.write_text(STUB_LAUNCHER, encoding="utf-8")
+        spaced.chmod(0o755)
+        result = self.review(**{commands.REVIEWER_ENV: str(spaced)})
+        self.assertEqual(commands.EXIT_OK, result.returncode, result.stderr)
 
 
 class DocumentCommandTests(unittest.TestCase):
@@ -800,8 +844,8 @@ class DocumentCommandTests(unittest.TestCase):
             env={
                 **os.environ,
                 "STUB_RESULT": template,
-                task_review.REVIEWER_ENV: str(self.launcher),
-                task_review.TIMEOUT_ENV: "60",
+                commands.REVIEWER_ENV: str(self.launcher),
+                commands.TIMEOUT_ENV: "60",
             },
             timeout=90,
         )
@@ -811,15 +855,15 @@ class DocumentCommandTests(unittest.TestCase):
 
     def test_an_approved_spec_verifies_and_then_stops_counting(self) -> None:
         reviewed = self.run_client("review-doc", *self.criterion_args(), template=self.APPROVE)
-        self.assertEqual(task_review.EXIT_OK, reviewed.returncode, reviewed.stderr)
+        self.assertEqual(commands.EXIT_OK, reviewed.returncode, reviewed.stderr)
         self.assertEqual("approve", json.loads(reviewed.stdout)["decision"])
         verified = self.run_client("verify-doc", *self.criterion_args(), template=self.APPROVE)
-        self.assertEqual(task_review.EXIT_OK, verified.returncode, verified.stdout + verified.stderr)
+        self.assertEqual(commands.EXIT_OK, verified.returncode, verified.stdout + verified.stderr)
         self.assertTrue(json.loads(verified.stdout)["approved"])
         consumed = self.run_client("consume-doc", *self.criterion_args(), template=self.APPROVE)
-        self.assertEqual(task_review.EXIT_OK, consumed.returncode, consumed.stderr)
+        self.assertEqual(commands.EXIT_OK, consumed.returncode, consumed.stderr)
         after = self.run_client("verify-doc", *self.criterion_args(), template=self.APPROVE)
-        self.assertEqual(task_review.EXIT_NOT_APPROVED, after.returncode)
+        self.assertEqual(commands.EXIT_NOT_APPROVED, after.returncode)
         self.assertEqual("consumed", json.loads(after.stdout)["state"])
 
     def test_document_recovery_preserves_the_document_request_and_verified_decision(self):
@@ -827,42 +871,44 @@ class DocumentCommandTests(unittest.TestCase):
         result = self.run_client(
             "review-doc", *self.criterion_args(), "--recovery-dir", str(recovery), template=self.APPROVE,
         )
-        self.assertEqual(task_review.EXIT_OK, result.returncode, result.stderr)
+        self.assertEqual(commands.EXIT_OK, result.returncode, result.stderr)
         request = json.loads((recovery / "request.json").read_text())
         self.assertEqual(str(self.doc), request["path"])
         self.assertNotIn("repositories", request)
         self.assertEqual(json.loads(result.stdout), json.loads((recovery / "result.json").read_text()))
         verified = self.run_client("verify-doc", *self.criterion_args(), template=self.APPROVE)
-        self.assertEqual(task_review.EXIT_OK, verified.returncode, verified.stderr)
+        self.assertEqual(commands.EXIT_OK, verified.returncode, verified.stderr)
 
     def test_editing_the_spec_after_approval_invalidates_it(self) -> None:
         reviewed = self.run_client("review-doc", *self.criterion_args(), template=self.APPROVE)
-        self.assertEqual(task_review.EXIT_OK, reviewed.returncode, reviewed.stderr)
+        self.assertEqual(commands.EXIT_OK, reviewed.returncode, reviewed.stderr)
         self.doc.write_text(self.doc.read_text(encoding="utf-8") + "\nOne more line.\n", encoding="utf-8")
         verified = self.run_client("verify-doc", *self.criterion_args(), template=self.APPROVE)
-        self.assertEqual(task_review.EXIT_NOT_APPROVED, verified.returncode)
+        self.assertEqual(commands.EXIT_NOT_APPROVED, verified.returncode)
         self.assertIn("changed since the approval", json.loads(verified.stdout)["reason"])
 
     def test_a_different_criterion_does_not_match_the_approval(self) -> None:
-        self.run_client("review-doc", *self.criterion_args(), template=self.APPROVE)
+        reviewed = self.run_client("review-doc", *self.criterion_args(), template=self.APPROVE)
+        self.assertEqual(commands.EXIT_OK, reviewed.returncode, reviewed.stderr)
         other = self.run_client(
             "verify-doc", "--criterion", "Something else entirely", "--doc", str(self.doc), template=self.APPROVE
         )
-        self.assertEqual(task_review.EXIT_NOT_APPROVED, other.returncode)
+        self.assertEqual(commands.EXIT_NOT_APPROVED, other.returncode)
+        self.assertFalse(json.loads(other.stdout)["approved"])
 
     def test_verify_takes_the_criterion_from_the_ledger_when_it_is_not_repeated(self) -> None:
         self.run_client("review-doc", *self.criterion_args(), template=self.APPROVE)
         verified = self.run_client("verify-doc", "--doc", str(self.doc), template=self.APPROVE)
-        self.assertEqual(task_review.EXIT_OK, verified.returncode, verified.stdout + verified.stderr)
+        self.assertEqual(commands.EXIT_OK, verified.returncode, verified.stdout + verified.stderr)
 
     def test_requested_changes_leaves_no_approval(self) -> None:
         reviewed = self.run_client("review-doc", *self.criterion_args(), template=self.COMMENT)
-        self.assertEqual(task_review.EXIT_NOT_APPROVED, reviewed.returncode)
+        self.assertEqual(commands.EXIT_NOT_APPROVED, reviewed.returncode)
         result = json.loads(reviewed.stdout)
         self.assertEqual("request-changes", result["decision"])
         self.assertEqual(5, result["annotations"][0]["target"]["start_line"])
         verified = self.run_client("verify-doc", *self.criterion_args(), template=self.COMMENT)
-        self.assertEqual(task_review.EXIT_NOT_APPROVED, verified.returncode)
+        self.assertEqual(commands.EXIT_NOT_APPROVED, verified.returncode)
 
     def test_a_diff_shaped_result_is_rejected_for_a_document_review(self) -> None:
         template = (
@@ -871,7 +917,7 @@ class DocumentCommandTests(unittest.TestCase):
             '"side":"new","start_line":1,"end_line":1}}]}'
         )
         reviewed = self.run_client("review-doc", *self.criterion_args(), template=template)
-        self.assertEqual(task_review.EXIT_ERROR, reviewed.returncode, "a diff annotation is not a document comment")
+        self.assertEqual(commands.EXIT_ERROR, reviewed.returncode, "a diff annotation is not a document comment")
         self.assertIn("malformed annotations", reviewed.stderr)
 
     def test_the_ledger_names_the_document(self) -> None:
@@ -884,7 +930,7 @@ class DocumentCommandTests(unittest.TestCase):
         ).stdout.strip()
         entries = [
             json.loads(line)
-            for line in (Path(common) / task_review.LEDGER_NAME).read_text(encoding="utf-8").splitlines()
+            for line in (Path(common) / commands.LEDGER_NAME).read_text(encoding="utf-8").splitlines()
         ]
         self.assertEqual(str(self.doc), entries[-1]["document"])
 
@@ -896,104 +942,116 @@ class DocumentCommandTests(unittest.TestCase):
         reviewed = self.run_client(
             "review-doc", "--criterion", "Read the notes", "--doc", str(loose), template=self.APPROVE
         )
-        self.assertEqual(task_review.EXIT_OK, reviewed.returncode, reviewed.stderr)
-        self.assertTrue((outside / task_review.LEDGER_NAME).is_file())
+        self.assertEqual(commands.EXIT_OK, reviewed.returncode, reviewed.stderr)
+        self.assertTrue((outside / commands.LEDGER_NAME).is_file())
         verified = self.run_client(
             "verify-doc", "--criterion", "Read the notes", "--doc", str(loose), template=self.APPROVE
         )
-        self.assertEqual(task_review.EXIT_OK, verified.returncode, verified.stdout + verified.stderr)
+        self.assertEqual(commands.EXIT_OK, verified.returncode, verified.stdout + verified.stderr)
 
 
 class GuidedReviewTests(ReviewCase):
     def guide(self) -> dict:
-        request = task_review.build_request("ship it", [task_review.Repository(str(self.root), ["a.py"])])
         return {
-            "version": 1, "fingerprint": task_review.collect_snapshot(request.repositories).fingerprint,
+            "version": 1, "fingerprint": self.fingerprint(paths=["a.py"]),
             "summary": "Print a different value", "before": "Print one", "after": "Print two",
             "chapters": [{"title": "Output", "summary": "Change the printed value",
                           "files": [{"repository": str(self.root), "path": "a.py"}]}],
         }
 
-    def invoke(self, *arguments: str, launch=None) -> tuple[int, str, str]:
-        stdout, stderr = io.StringIO(), io.StringIO()
-        with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
-            code = task_review.main(list(arguments), {task_review.REVIEWER_ENV: "html"}, launch=launch or self.approve)
-        return code, stdout.getvalue(), stderr.getvalue()
+    def request(self, **extra) -> dict:
+        return {
+            "version": "1", "review_id": "guided-review", "criterion": "ship it",
+            "repositories": [{"root": str(self.root), "paths": ["a.py"]}], **extra,
+        }
 
-    @staticmethod
-    def approve(launcher, request_json, timeout):
-        request = json.loads(request_json)
-        return json.dumps({"version": "1", "review_id": request["review_id"], "decision": "approve", "annotations": []}).encode()
+    def assertServedGuide(self, expected: dict, url: str) -> None:
+        served = self.served(url)["guide"]
+        self.assertTrue(served["authored"])
+        self.assertEqual(expected["summary"], served["summary"])
+        self.assertEqual(
+            [chapter["title"] for chapter in expected["chapters"]],
+            [chapter["title"] for chapter in served["chapters"]],
+        )
 
     def test_status_accepts_paths_and_returns_the_scoped_guide_fingerprint(self):
         expected = self.guide()["fingerprint"]
         result = self.run_client("status", "--repo", str(self.root), "--paths", "a.py")
-        self.assertEqual(task_review.EXIT_NOT_APPROVED, result.returncode, result.stderr)
+        self.assertEqual(commands.EXIT_NOT_APPROVED, result.returncode, result.stderr)
         self.assertEqual(expected, json.loads(result.stdout)["fingerprint"])
 
     def test_cli_captures_guide_once_and_existing_verification_still_checks_code(self):
         value = self.guide()
         path = self.base / "guide.json"
         path.write_text(json.dumps(value))
-
-        def launch(launcher, request_json, timeout):
-            captured = json.loads(request_json)
-            path.write_text("changed after capture")
-            self.assertEqual(value, captured["guide"])
-            return self.approve(launcher, request_json, timeout)
-
-        code, out, error = self.invoke("review", "--criterion", "ship it", "--repo", str(self.root), "--paths", "a.py", "--guide", str(path), launch=launch)
-        self.assertEqual(task_review.EXIT_OK, code, out + error)
-        self.assertEqual(task_review.EXIT_OK, self.verify("--paths", "a.py").returncode)
+        process, url = self.start_html([
+            *commands.client(), "review", "--criterion", "ship it", "--repo", str(self.root),
+            "--paths", "a.py", "--guide", str(path),
+        ])
+        path.write_text("changed after capture")
+        self.assertServedGuide(value, url)
+        self.decide(url, "approve")
+        out, error = process.communicate(timeout=30)
+        self.assertEqual(commands.EXIT_OK, process.returncode, out + error)
+        self.assertEqual(commands.EXIT_OK, self.verify("--paths", "a.py").returncode)
         self.write("a.py", "changed after approval\n")
-        self.assertEqual(task_review.EXIT_NOT_APPROVED, self.verify("--paths", "a.py").returncode)
+        self.assertEqual(commands.EXIT_NOT_APPROVED, self.verify("--paths", "a.py").returncode)
 
     def test_inline_guide_round_trip_and_mid_review_mutation_fails_closed(self):
-        request = task_review.build_request("ship it", [task_review.Repository(str(self.root), ["a.py"])])
-        payload = {**request.payload(), "guide": self.guide()}
-
-        def launch(launcher, request_json, timeout):
-            self.assertEqual(payload["guide"], json.loads(request_json)["guide"])
-            self.write("a.py", "mutated during review\n")
-            return self.approve(launcher, request_json, timeout)
-
-        code, out, error = self.invoke("review", "--json", json.dumps(payload), launch=launch)
-        self.assertEqual(task_review.EXIT_ERROR, code)
+        payload = self.request(guide=self.guide())
+        process, url = self.start_html([*commands.client(), "review", "--json", json.dumps(payload)])
+        self.assertServedGuide(payload["guide"], url)
+        self.write("a.py", "mutated during review\n")
+        self.decide(url, "approve")
+        out, error = process.communicate(timeout=30)
+        self.assertEqual(commands.EXIT_ERROR, process.returncode)
         self.assertIn("changed while the human", error)
         self.assertEqual("", out)
-        self.assertEqual(task_review.EXIT_NOT_APPROVED, self.verify("--paths", "a.py").returncode)
+        self.assertEqual(commands.EXIT_NOT_APPROVED, self.verify("--paths", "a.py").returncode)
 
     def test_stale_unknown_and_non_html_guides_never_reach_a_launcher(self):
-        request = task_review.build_request("ship it", [task_review.Repository(str(self.root), ["a.py"])])
         for problem in ("stale", "unknown", "backend"):
             with self.subTest(problem=problem):
                 value = self.guide()
-                launcher = "html"
+                reviewer = "html"
                 if problem == "stale":
                     value["fingerprint"] = "b" * 64
                 elif problem == "unknown":
                     value["chapters"][0]["files"][0]["path"] = "untracked.txt"
                 else:
-                    launcher = "rdg"
-                guided = task_review.normalize_request({**request.payload(), "guide": value})
-                with self.assertRaises(task_review.TaskReviewError):
-                    task_review.command_review(guided, git=task_review.run_git, launch=lambda *args: self.fail("invalid guide reached launcher"), launcher=launcher, timeout=1)
-                self.assertEqual(task_review.EXIT_NOT_APPROVED, self.verify("--paths", "a.py").returncode)
+                    reviewer = str(self.launcher)
+                url_file = self.base / f"url-{problem}"
+                seen = self.base / f"seen-{problem}.json"
+                result = self.run_client(
+                    "review", "--json", json.dumps(self.request(guide=value)),
+                    STUB_REQUEST=str(seen),
+                    **{commands.REVIEWER_ENV: reviewer, commands.NO_BROWSER_ENV: "1", commands.URL_FILE_ENV: str(url_file)},
+                )
+                self.assertNoApproval(result)
+                self.assertFalse(url_file.exists(), "an invalid guide reached the HTML reviewer")
+                self.assertFalse(seen.exists(), "an invalid guide reached the launcher")
+                if problem == "backend":
+                    self.assertIn("guided reviews require", result.stderr)
 
     def test_bad_files_and_conflicting_flags_report_local_errors(self):
         path = self.base / "guide.json"
-        for content in (b"not JSON", b"\xff", b"x" * (task_review.MAX_GUIDE_BYTES + 1)):
-            path.write_bytes(content)
-            code, out, error = self.invoke("review", "--criterion", "ship it", "--repo", str(self.root), "--guide", str(path))
-            self.assertEqual(task_review.EXIT_ERROR, code, out)
-            self.assertIn("guide", error)
+        url_file = self.base / "url"
+        html = {commands.REVIEWER_ENV: "html", commands.NO_BROWSER_ENV: "1", commands.URL_FILE_ENV: str(url_file)}
+        for content in (b"not JSON", b"\xff", b"x" * (commands.MAX_GUIDE_BYTES + 1)):
+            with self.subTest(content=content[:10]):
+                path.write_bytes(content)
+                result = self.review("--guide", str(path), **html)
+                self.assertEqual(commands.EXIT_ERROR, result.returncode, result.stdout)
+                self.assertIn("guide", result.stderr)
         path.unlink()
-        with self.assertRaisesRegex(task_review.UsageError, "unable to read guide"):
-            task_review.read_guide(str(path))
-        request = task_review.build_request("ship it", [task_review.Repository(str(self.root))])
-        code, out, error = self.invoke("review", "--json", request.to_json(), "--guide", str(path))
-        self.assertEqual(task_review.EXIT_ERROR, code, out)
-        self.assertIn("--guide", error)
+        result = self.review("--guide", str(path), **html)
+        self.assertEqual(commands.EXIT_ERROR, result.returncode, result.stdout)
+        self.assertIn("unable to read guide", result.stderr)
+        request = self.request()
+        result = self.run_client("review", "--json", json.dumps(request), "--guide", str(path), **html)
+        self.assertEqual(commands.EXIT_ERROR, result.returncode, result.stdout)
+        self.assertIn("--guide", result.stderr)
+        self.assertFalse(url_file.exists(), "a bad guide reached the HTML reviewer")
 
 
 class RecoveryFlowTests(ReviewCase):
@@ -1005,7 +1063,7 @@ class RecoveryFlowTests(ReviewCase):
 
     def test_validated_result_and_exact_request_are_retained(self):
         result = self.review("--recovery-dir", str(self.recovery()), "--paths", "a.py")
-        self.assertEqual(task_review.EXIT_OK, result.returncode, result.stderr)
+        self.assertEqual(commands.EXIT_OK, result.returncode, result.stderr)
         decision = self.assertSingleJsonLine(result)
         self.assertEqual(decision, self.read_recovery("result.json"))
         request = self.read_recovery("request.json")
@@ -1013,18 +1071,18 @@ class RecoveryFlowTests(ReviewCase):
         self.assertEqual([{"root": str(self.root), "paths": ["a.py"]}], request["repositories"])
         state = self.read_recovery("state.json")
         self.assertEqual(("finished", "approve", 0), (state["state"], state["decision"], state["exit_code"]))
-        self.assertEqual(task_review.EXIT_OK, self.verify("--paths", "a.py").returncode)
+        self.assertEqual(commands.EXIT_OK, self.verify("--paths", "a.py").returncode)
         self.assertEqual(0o700, stat.S_IMODE(self.recovery().stat().st_mode))
         for artifact in self.recovery().iterdir():
             self.assertEqual(0o600, stat.S_IMODE(artifact.stat().st_mode), artifact.name)
 
     def test_nonapproval_is_a_finished_decision_not_a_launcher_error(self):
         result = self.review("--recovery-dir", str(self.recovery()), STUB_RESULT=REJECT)
-        self.assertEqual(task_review.EXIT_NOT_APPROVED, result.returncode, result.stderr)
+        self.assertEqual(commands.EXIT_NOT_APPROVED, result.returncode, result.stderr)
         self.assertEqual("request-changes", self.read_recovery("result.json")["decision"])
         state = self.read_recovery("state.json")
         self.assertEqual(("finished", 1), (state["state"], state["exit_code"]))
-        self.assertEqual(task_review.EXIT_NOT_APPROVED, self.verify().returncode)
+        self.assertEqual(commands.EXIT_NOT_APPROVED, self.verify().returncode)
 
     def test_malformed_result_retains_error_without_an_approval_artifact(self):
         result = self.review("--recovery-dir", str(self.recovery()), STUB_MODE="garbage")
@@ -1045,33 +1103,22 @@ class RecoveryFlowTests(ReviewCase):
     def test_recovery_storage_failure_cannot_leave_a_verifiable_approval(self):
         document = self.root / "plan.md"
         document.write_text("# Approved plan\n")
-        replace_file = os.replace
         for command in ("review", "review-doc"):
             for artifact in ("result.json", "state.json"):
                 with self.subTest(command=command, artifact=artifact):
                     directory = self.base / f"{command}-{artifact}"
                     scope = ["--repo", str(self.root)] if command == "review" else ["--doc", str(document)]
-                    args = task_review.build_parser().parse_args(
-                        [command, "--criterion", "ship it", *scope, "--recovery-dir", str(directory)],
+                    result = self.run_client(
+                        command, "--criterion", "ship it", *scope, "--recovery-dir", str(directory),
+                        STUB_BLOCK=str(directory / artifact),
                     )
-
-                    def fail_final_write(source, destination):
-                        if Path(destination).name == artifact:
-                            payload = json.loads(Path(source).read_text())
-                            if artifact == "result.json" or payload.get("state") == "finished":
-                                raise OSError("recovery storage unavailable")
-                        return replace_file(source, destination)
-
-                    with self.captured(), mock.patch.object(task_review.os, "replace", side_effect=fail_final_write):
-                        with self.assertRaises(OSError):
-                            task_review.dispatch(
-                                args, {}, git=task_review.run_git,
-                                launch=GuidedReviewTests.approve, launch_doc=GuidedReviewTests.approve,
-                            )
+                    self.assertEqual(commands.EXIT_ERROR, result.returncode, result.stderr)
+                    self.assertEqual("", result.stdout)
                     verify_command = "verify" if command == "review" else "verify-doc"
                     verified = self.run_client(verify_command, *scope)
-                    self.assertEqual(task_review.EXIT_NOT_APPROVED, verified.returncode, verified.stdout)
-                    self.assertEqual("error", json.loads((directory / "state.json").read_text())["state"])
+                    self.assertEqual(commands.EXIT_NOT_APPROVED, verified.returncode, verified.stdout)
+                    if artifact == "result.json":
+                        self.assertEqual("error", json.loads((directory / "state.json").read_text())["state"])
 
     def test_complete_multi_repository_scope_is_retained_and_verified_together(self):
         other = self.make_repo("second repository")
@@ -1080,23 +1127,23 @@ class RecoveryFlowTests(ReviewCase):
             "review", "--criterion", "ship both", "--repo", str(self.root), "--repo", str(other),
             "--recovery-dir", str(self.recovery()),
         )
-        self.assertEqual(task_review.EXIT_OK, result.returncode, result.stderr)
+        self.assertEqual(commands.EXIT_OK, result.returncode, result.stderr)
         verify = self.run_client("verify", "--repo", str(self.root), "--repo", str(other))
-        self.assertEqual(task_review.EXIT_OK, verify.returncode, verify.stderr)
+        self.assertEqual(commands.EXIT_OK, verify.returncode, verify.stderr)
         (other / "a.py").write_text("changed after approval\n")
-        self.assertEqual(task_review.EXIT_NOT_APPROVED, self.run_client(
+        self.assertEqual(commands.EXIT_NOT_APPROVED, self.run_client(
             "verify", "--repo", str(self.root), "--repo", str(other),
         ).returncode)
 
     def test_existing_run_is_not_overwritten_or_relaunched(self):
         first = self.review("--recovery-dir", str(self.recovery()))
-        self.assertEqual(task_review.EXIT_OK, first.returncode, first.stderr)
+        self.assertEqual(commands.EXIT_OK, first.returncode, first.stderr)
         saved = {p.name: p.read_bytes() for p in self.recovery().iterdir()}
         second = self.review("--recovery-dir", str(self.recovery()))
-        self.assertEqual(task_review.EXIT_ERROR, second.returncode, second.stderr)
+        self.assertEqual(commands.EXIT_ERROR, second.returncode, second.stderr)
         self.assertIn("recover", second.stderr)
         self.assertEqual(saved, {p.name: p.read_bytes() for p in self.recovery().iterdir()})
-        self.assertEqual(task_review.EXIT_OK, self.verify().returncode)
+        self.assertEqual(commands.EXIT_OK, self.verify().returncode)
 
     def test_recovery_inside_reviewed_tree_or_public_directory_is_rejected(self):
         public = self.base / "public"
@@ -1104,45 +1151,9 @@ class RecoveryFlowTests(ReviewCase):
         for path in (self.root / "recovery", public):
             with self.subTest(path=path):
                 result = self.review("--recovery-dir", str(path))
-                self.assertEqual(task_review.EXIT_ERROR, result.returncode, result.stderr)
+                self.assertEqual(commands.EXIT_ERROR, result.returncode, result.stderr)
                 self.assertEqual([], self.entries())
         self.assertFalse((self.root / "recovery").exists())
-
-    @unittest.skipUnless(os.name == "posix", "native startup cancellation requires POSIX")
-    @unittest.skipIf(commands.BINARY, "patches the Python client's internals")
-    def test_cancellation_during_process_recording_reaps_the_reviewer(self):
-        self.launcher.write_text("#!/usr/bin/env python3\nimport signal\nsignal.pause()\n")
-        bootstrap = (
-            "import os,signal,sys; "
-            f"sys.path.insert(0,{str(ROOT / 'scripts')!r}); "
-            "import task_review; original=task_review.ReviewRecovery.reviewer_started\n"
-            "def started(self,pid,command):\n"
-            " original(self,pid,command)\n"
-            " os.kill(os.getpid(),signal.SIGTERM)\n"
-            "task_review.ReviewRecovery.reviewer_started=started\n"
-            "sys.exit(task_review.main(sys.argv[1:]))\n"
-        )
-        result = subprocess.run(
-            [sys.executable, "-c", bootstrap, "review", "--criterion", "ship it",
-             "--repo", str(self.root), "--recovery-dir", str(self.recovery())],
-            capture_output=True, env=self.env(), timeout=10,
-        )
-        record = self.read_recovery("process.json")
-        pid = record["reviewer_pid"]
-
-        def cleanup() -> None:
-            try:
-                os.killpg(pid, signal.SIGKILL)
-            except ProcessLookupError:
-                pass
-
-        self.addCleanup(cleanup)
-        self.assertEqual(task_review.EXIT_ERROR, result.returncode, result.stderr.decode())
-        self.assertEqual(b"", result.stdout)
-        self.assertEqual("error", self.read_recovery("state.json")["state"])
-        with self.assertRaises(ProcessLookupError):
-            os.kill(pid, 0)
-        self.assertEqual(task_review.EXIT_NOT_APPROVED, self.verify().returncode)
 
     @unittest.skipUnless(os.name == "posix", "FIFO handshake and native cancellation require POSIX")
     def test_live_diagnostics_arrive_before_decision_and_cancellation_reaps_reviewer(self):
@@ -1188,31 +1199,31 @@ class RecoveryFlowTests(ReviewCase):
         reviewer_pid = self.read_recovery("process.json")["reviewer_pid"]
         process.send_signal(signal.SIGTERM)
         stdout, stderr = process.communicate(timeout=10)
-        self.assertEqual(task_review.EXIT_ERROR, process.returncode, stderr.decode())
+        self.assertEqual(commands.EXIT_ERROR, process.returncode, stderr.decode())
         self.assertEqual(b"", stdout)
         self.assertEqual("error", self.read_recovery("state.json")["state"])
         with self.assertRaises(ProcessLookupError):
             os.kill(reviewer_pid, 0)
-        self.assertEqual(task_review.EXIT_NOT_APPROVED, self.verify().returncode)
+        self.assertEqual(commands.EXIT_NOT_APPROVED, self.verify().returncode)
 
 
 class PreflightTests(ReviewCase):
     guide = GuidedReviewTests.guide
 
     def test_valid_guide_preflight_does_not_change_existing_approval(self):
-        self.assertEqual(task_review.EXIT_OK, self.review("--paths", "a.py").returncode)
-        ledger = (self.root / ".git" / task_review.LEDGER_NAME).read_bytes()
+        self.assertEqual(commands.EXIT_OK, self.review("--paths", "a.py").returncode)
+        ledger = (self.root / ".git" / commands.LEDGER_NAME).read_bytes()
         guide = self.base / "guide.json"
         guide.write_text(json.dumps(self.guide()))
         result = self.run_client(
             "preflight", "--criterion", "ship it", "--repo", str(self.root), "--paths", "a.py",
-            "--guide", str(guide), **{task_review.REVIEWER_ENV: "html"},
+            "--guide", str(guide), **{commands.REVIEWER_ENV: "html"},
         )
-        self.assertEqual(task_review.EXIT_OK, result.returncode, result.stderr)
+        self.assertEqual(commands.EXIT_OK, result.returncode, result.stderr)
         payload = self.assertSingleJsonLine(result)
         self.assertEqual(self.guide()["fingerprint"], payload["fingerprint"])
         self.assertNotIn("decision", payload)
-        self.assertEqual(ledger, (self.root / ".git" / task_review.LEDGER_NAME).read_bytes())
+        self.assertEqual(ledger, (self.root / ".git" / commands.LEDGER_NAME).read_bytes())
 
     def test_duplicate_stale_and_out_of_scope_guides_fail_without_ledger_mutation(self):
         for problem in ("duplicate", "stale", "scope"):
@@ -1228,9 +1239,9 @@ class PreflightTests(ReviewCase):
                 guide.write_text(json.dumps(value))
                 result = self.run_client(
                     "preflight", "--criterion", "ship it", "--repo", str(self.root), "--paths", "a.py",
-                    "--guide", str(guide), **{task_review.REVIEWER_ENV: "html"},
+                    "--guide", str(guide), **{commands.REVIEWER_ENV: "html"},
                 )
-                self.assertEqual(task_review.EXIT_ERROR, result.returncode, result.stderr)
+                self.assertEqual(commands.EXIT_ERROR, result.returncode, result.stderr)
                 self.assertIn({"duplicate": "duplicate", "stale": "stale", "scope": "outside the captured diff"}[problem], result.stderr)
                 self.assertEqual("", result.stdout)
                 self.assertEqual([], self.entries())

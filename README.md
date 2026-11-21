@@ -12,8 +12,8 @@ agent ──→ senpai ──→ git diff or document ──→ local browser �
           approve / request-changes / return-to-planning / cancelled
 ```
 
-- Python 3.11 or 3.13, Git and a local browser. No pip/npm install, Node, editor or agent runtime needed.
-- `bin/senpai` is the command-line client; it resolves symlinks, so you can link it onto your `PATH`.
+- One Rust binary plus Git and a local browser. The page, its scripts and fonts are built in; no Python, Node, editor or agent runtime needed.
+- Install with `cargo install --path .` (to `~/.cargo/bin/senpai`), and rerun it after every update.
 - Formats, exit codes, the `task-review-approval.jsonl` ledger and the `TASK_REVIEW_*`
   variables are unchanged from the client that used to ship in agent-workflow.
 
@@ -22,10 +22,10 @@ agent ──→ senpai ──→ git diff or document ──→ local browser �
 ### 1. Review
 
 ```sh
-SENPAI=/absolute/path/to/senpai
+SENPAI=/absolute/path/to/senpai   # e.g. ~/.cargo/bin/senpai, expanded
 TARGET="$(cd /path/to/your/git-repository && pwd -P)"
 
-"$SENPAI/bin/senpai" review \
+"$SENPAI" review \
   --criterion "The approved change and its tests are correct" \
   --repo "$TARGET" --paths src/example.py,tests/test_example.py \
   --recovery-dir /absolute/private/new-review
@@ -91,13 +91,13 @@ repositories and client recovery artifacts. Obtain the fingerprint using the
 **same repo/path scope**:
 
 ```sh
-"$SENPAI/bin/senpai" status --repo "$TARGET" --paths src/example.py,tests/test_example.py
+"$SENPAI" status --repo "$TARGET" --paths src/example.py,tests/test_example.py
 # Exit 1 is normal when no approval exists; read the fingerprint in its JSON output.
-"$SENPAI/bin/senpai" preflight \
+"$SENPAI" preflight \
   --criterion "The approved change and its tests are correct" \
   --repo "$TARGET" --paths src/example.py,tests/test_example.py \
   --guide /absolute/private/path/guide.json
-"$SENPAI/bin/senpai" review \
+"$SENPAI" review \
   --criterion "The approved change and its tests are correct" \
   --repo "$TARGET" --paths src/example.py,tests/test_example.py \
   --guide /absolute/private/path/guide.json
@@ -155,12 +155,12 @@ review → approve → verify → stage owned files → inspect → commit → c
 ```
 
 ```sh
-"$SENPAI/bin/senpai" verify \
+"$SENPAI" verify \
   --repo "$TARGET" --paths src/example.py,tests/test_example.py
 git -C "$TARGET" add -- src/example.py tests/test_example.py
 git -C "$TARGET" diff --cached --name-only
 git -C "$TARGET" commit -m "Describe the verified change"
-"$SENPAI/bin/senpai" consume --repo "$TARGET"
+"$SENPAI" consume --repo "$TARGET"
 ```
 
 - **Stop on failure.** Verify immediately before staging; commit only the reviewed unit.
@@ -171,11 +171,11 @@ git -C "$TARGET" commit -m "Describe the verified change"
 ### Documents
 
 ```sh
-"$SENPAI/bin/senpai" review-doc \
+"$SENPAI" review-doc \
   --criterion "This technical plan settles the outcome, material design and executable tasks" \
   --doc /absolute/path/to/technical-plan.md
-"$SENPAI/bin/senpai" verify-doc --doc /absolute/path/to/technical-plan.md
-"$SENPAI/bin/senpai" consume-doc --doc /absolute/path/to/technical-plan.md
+"$SENPAI" verify-doc --doc /absolute/path/to/technical-plan.md
+"$SENPAI" consume-doc --doc /absolute/path/to/technical-plan.md
 ```
 
 - Rendered headings/tables/code and outline; comments retain source line ranges.
@@ -218,10 +218,16 @@ git -C "$TARGET" commit -m "Describe the verified change"
 ## Verification
 
 ```sh
+cargo clippy --release --all-targets -- -D warnings
+cargo test --release
 python3 -m unittest discover -s tests -v
 node --test tests/test_diff_view.js
-sh -n bin/senpai
 ```
+
+The Python suite drives the release binary as a black box (`SENPAI_BINARY`
+overrides it). `tests/test_rust_parity.py` also compares it with the last Python
+client, extracted from git history. Golden cases recorded from that client live
+in `tests/golden/` and are replayed by `cargo test`.
 
 No GitHub Actions workflow is provided; run the checks locally.
 

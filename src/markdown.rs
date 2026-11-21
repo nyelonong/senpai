@@ -280,6 +280,24 @@ mod tests {
     use super::*;
     use crate::json;
 
+    #[test]
+    fn matches_the_recorded_python_renderer() {
+        let cases = json::loads_str(include_str!("../tests/golden/markdown.json")).expect("golden JSON");
+        let cases = cases.as_array().expect("a list of cases");
+        assert!(!cases.is_empty());
+        for case in cases {
+            let input = case.get("input").and_then(json::Value::as_pystr).expect("input").display();
+            let produced = match case.get("function").and_then(json::Value::as_pystr).expect("function").display().as_str() {
+                "rows" => rows(&input),
+                "blocks" => blocks(&input),
+                other => panic!("unknown function {other}"),
+            };
+            let produced = json::Value::Array(produced.into_iter().map(json::Value::Object).collect());
+            let expected = case.get("output").expect("output");
+            assert_eq!(json::dumps(expected, json::SORTED), json::dumps(&produced, json::SORTED), "{input:?}");
+        }
+    }
+
     fn html(source: &str) -> String {
         string_of(&rows(source)[0], "html").to_string()
     }

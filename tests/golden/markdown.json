@@ -1,0 +1,1842 @@
+[
+ {
+  "function": "rows",
+  "input": "a **bold** para\n",
+  "output": [
+   {
+    "n": 1,
+    "kind": "text",
+    "text": "a **bold** para",
+    "html": "a <b>bold</b> para"
+   }
+  ]
+ },
+ {
+  "function": "blocks",
+  "input": "a **bold** para\n",
+  "output": [
+   {
+    "kind": "text",
+    "start": 1,
+    "end": 1,
+    "html": "a <b>bold</b> para",
+    "source": "a **bold** para"
+   }
+  ]
+ },
+ {
+  "function": "rows",
+  "input": "# Title\n\nfirst paragraph line\nstill the same paragraph\n\n## Design\n\n- item one\n  wrapped onto the next line\n- item two\n\n1. numbered\n\n> a quote\n> still the quote\n\n| a | b |\n| --- | --- |\n| 1 | 2 |\n\n```\ncode line\n\nstill code\n```\n\n---\n\nlast paragraph\n",
+  "output": [
+   {
+    "n": 1,
+    "kind": "heading",
+    "text": "# Title",
+    "level": 1,
+    "html": "Title"
+   },
+   {
+    "n": 2,
+    "kind": "blank",
+    "text": "",
+    "html": ""
+   },
+   {
+    "n": 3,
+    "kind": "text",
+    "text": "first paragraph line",
+    "html": "first paragraph line"
+   },
+   {
+    "n": 4,
+    "kind": "text",
+    "text": "still the same paragraph",
+    "html": "still the same paragraph"
+   },
+   {
+    "n": 5,
+    "kind": "blank",
+    "text": "",
+    "html": ""
+   },
+   {
+    "n": 6,
+    "kind": "heading",
+    "text": "## Design",
+    "level": 2,
+    "html": "Design"
+   },
+   {
+    "n": 7,
+    "kind": "blank",
+    "text": "",
+    "html": ""
+   },
+   {
+    "n": 8,
+    "kind": "list",
+    "text": "- item one",
+    "html": "item one"
+   },
+   {
+    "n": 9,
+    "kind": "text",
+    "text": "  wrapped onto the next line",
+    "html": "wrapped onto the next line"
+   },
+   {
+    "n": 10,
+    "kind": "list",
+    "text": "- item two",
+    "html": "item two"
+   },
+   {
+    "n": 11,
+    "kind": "blank",
+    "text": "",
+    "html": ""
+   },
+   {
+    "n": 12,
+    "kind": "list",
+    "text": "1. numbered",
+    "html": "numbered"
+   },
+   {
+    "n": 13,
+    "kind": "blank",
+    "text": "",
+    "html": ""
+   },
+   {
+    "n": 14,
+    "kind": "quote",
+    "text": "> a quote",
+    "html": "a quote"
+   },
+   {
+    "n": 15,
+    "kind": "quote",
+    "text": "> still the quote",
+    "html": "still the quote"
+   },
+   {
+    "n": 16,
+    "kind": "blank",
+    "text": "",
+    "html": ""
+   },
+   {
+    "n": 17,
+    "kind": "table",
+    "text": "| a | b |",
+    "html": "a | b"
+   },
+   {
+    "n": 18,
+    "kind": "table",
+    "text": "| --- | --- |",
+    "html": "--- | ---"
+   },
+   {
+    "n": 19,
+    "kind": "table",
+    "text": "| 1 | 2 |",
+    "html": "1 | 2"
+   },
+   {
+    "n": 20,
+    "kind": "blank",
+    "text": "",
+    "html": ""
+   },
+   {
+    "n": 21,
+    "kind": "code",
+    "html": "```",
+    "text": "```"
+   },
+   {
+    "n": 22,
+    "kind": "code",
+    "html": "code line",
+    "text": "code line"
+   },
+   {
+    "n": 23,
+    "kind": "code",
+    "html": "",
+    "text": ""
+   },
+   {
+    "n": 24,
+    "kind": "code",
+    "html": "still code",
+    "text": "still code"
+   },
+   {
+    "n": 25,
+    "kind": "code",
+    "html": "```",
+    "text": "```"
+   },
+   {
+    "n": 26,
+    "kind": "blank",
+    "text": "",
+    "html": ""
+   },
+   {
+    "n": 27,
+    "kind": "rule",
+    "text": "---",
+    "html": "---"
+   },
+   {
+    "n": 28,
+    "kind": "blank",
+    "text": "",
+    "html": ""
+   },
+   {
+    "n": 29,
+    "kind": "text",
+    "text": "last paragraph",
+    "html": "last paragraph"
+   }
+  ]
+ },
+ {
+  "function": "blocks",
+  "input": "# Title\n\nfirst paragraph line\nstill the same paragraph\n\n## Design\n\n- item one\n  wrapped onto the next line\n- item two\n\n1. numbered\n\n> a quote\n> still the quote\n\n| a | b |\n| --- | --- |\n| 1 | 2 |\n\n```\ncode line\n\nstill code\n```\n\n---\n\nlast paragraph\n",
+  "output": [
+   {
+    "kind": "heading",
+    "start": 1,
+    "end": 1,
+    "html": "Title",
+    "level": 1,
+    "source": "# Title"
+   },
+   {
+    "kind": "blank",
+    "start": 2,
+    "end": 2,
+    "html": "",
+    "source": ""
+   },
+   {
+    "kind": "text",
+    "start": 3,
+    "end": 4,
+    "html": "first paragraph line\nstill the same paragraph",
+    "source": "first paragraph line\nstill the same paragraph"
+   },
+   {
+    "kind": "blank",
+    "start": 5,
+    "end": 5,
+    "html": "",
+    "source": ""
+   },
+   {
+    "kind": "heading",
+    "start": 6,
+    "end": 6,
+    "html": "Design",
+    "level": 2,
+    "source": "## Design"
+   },
+   {
+    "kind": "blank",
+    "start": 7,
+    "end": 7,
+    "html": "",
+    "source": ""
+   },
+   {
+    "kind": "list",
+    "start": 8,
+    "end": 9,
+    "html": "item one\nwrapped onto the next line",
+    "source": "- item one\n  wrapped onto the next line"
+   },
+   {
+    "kind": "list",
+    "start": 10,
+    "end": 10,
+    "html": "item two",
+    "source": "- item two"
+   },
+   {
+    "kind": "blank",
+    "start": 11,
+    "end": 11,
+    "html": "",
+    "source": ""
+   },
+   {
+    "kind": "list",
+    "start": 12,
+    "end": 12,
+    "html": "numbered",
+    "source": "1. numbered"
+   },
+   {
+    "kind": "blank",
+    "start": 13,
+    "end": 13,
+    "html": "",
+    "source": ""
+   },
+   {
+    "kind": "quote",
+    "start": 14,
+    "end": 15,
+    "html": "a quote\nstill the quote",
+    "source": "> a quote\n> still the quote"
+   },
+   {
+    "kind": "blank",
+    "start": 16,
+    "end": 16,
+    "html": "",
+    "source": ""
+   },
+   {
+    "kind": "table",
+    "start": 17,
+    "end": 19,
+    "html": "a | b\n--- | ---\n1 | 2",
+    "source": "| a | b |\n| --- | --- |\n| 1 | 2 |"
+   },
+   {
+    "kind": "blank",
+    "start": 20,
+    "end": 20,
+    "html": "",
+    "source": ""
+   },
+   {
+    "kind": "code",
+    "start": 21,
+    "end": 25,
+    "html": "```\ncode line\n\nstill code\n```",
+    "source": "```\ncode line\n\nstill code\n```"
+   },
+   {
+    "kind": "blank",
+    "start": 26,
+    "end": 26,
+    "html": "",
+    "source": ""
+   },
+   {
+    "kind": "rule",
+    "start": 27,
+    "end": 27,
+    "html": "---",
+    "source": "---"
+   },
+   {
+    "kind": "blank",
+    "start": 28,
+    "end": 28,
+    "html": "",
+    "source": ""
+   },
+   {
+    "kind": "text",
+    "start": 29,
+    "end": 29,
+    "html": "last paragraph",
+    "source": "last paragraph"
+   }
+  ]
+ },
+ {
+  "function": "rows",
+  "input": "",
+  "output": []
+ },
+ {
+  "function": "blocks",
+  "input": "",
+  "output": []
+ },
+ {
+  "function": "rows",
+  "input": "one line",
+  "output": [
+   {
+    "n": 1,
+    "kind": "text",
+    "text": "one line",
+    "html": "one line"
+   }
+  ]
+ },
+ {
+  "function": "blocks",
+  "input": "one line",
+  "output": [
+   {
+    "kind": "text",
+    "start": 1,
+    "end": 1,
+    "html": "one line",
+    "source": "one line"
+   }
+  ]
+ },
+ {
+  "function": "rows",
+  "input": "# only a heading\n",
+  "output": [
+   {
+    "n": 1,
+    "kind": "heading",
+    "text": "# only a heading",
+    "level": 1,
+    "html": "only a heading"
+   }
+  ]
+ },
+ {
+  "function": "blocks",
+  "input": "# only a heading\n",
+  "output": [
+   {
+    "kind": "heading",
+    "start": 1,
+    "end": 1,
+    "html": "only a heading",
+    "level": 1,
+    "source": "# only a heading"
+   }
+  ]
+ },
+ {
+  "function": "rows",
+  "input": "\n\n\n",
+  "output": [
+   {
+    "n": 1,
+    "kind": "blank",
+    "text": "",
+    "html": ""
+   },
+   {
+    "n": 2,
+    "kind": "blank",
+    "text": "",
+    "html": ""
+   },
+   {
+    "n": 3,
+    "kind": "blank",
+    "text": "",
+    "html": ""
+   }
+  ]
+ },
+ {
+  "function": "blocks",
+  "input": "\n\n\n",
+  "output": [
+   {
+    "kind": "blank",
+    "start": 1,
+    "end": 3,
+    "html": "\n\n",
+    "source": "\n\n"
+   }
+  ]
+ },
+ {
+  "function": "rows",
+  "input": "a\n\n\n\nb\n",
+  "output": [
+   {
+    "n": 1,
+    "kind": "text",
+    "text": "a",
+    "html": "a"
+   },
+   {
+    "n": 2,
+    "kind": "blank",
+    "text": "",
+    "html": ""
+   },
+   {
+    "n": 3,
+    "kind": "blank",
+    "text": "",
+    "html": ""
+   },
+   {
+    "n": 4,
+    "kind": "blank",
+    "text": "",
+    "html": ""
+   },
+   {
+    "n": 5,
+    "kind": "text",
+    "text": "b",
+    "html": "b"
+   }
+  ]
+ },
+ {
+  "function": "blocks",
+  "input": "a\n\n\n\nb\n",
+  "output": [
+   {
+    "kind": "text",
+    "start": 1,
+    "end": 1,
+    "html": "a",
+    "source": "a"
+   },
+   {
+    "kind": "blank",
+    "start": 2,
+    "end": 4,
+    "html": "\n\n",
+    "source": "\n\n"
+   },
+   {
+    "kind": "text",
+    "start": 5,
+    "end": 5,
+    "html": "b",
+    "source": "b"
+   }
+  ]
+ },
+ {
+  "function": "rows",
+  "input": "## Design\n\n- [x] done\n",
+  "output": [
+   {
+    "n": 1,
+    "kind": "heading",
+    "text": "## Design",
+    "level": 2,
+    "html": "Design"
+   },
+   {
+    "n": 2,
+    "kind": "blank",
+    "text": "",
+    "html": ""
+   },
+   {
+    "n": 3,
+    "kind": "list",
+    "text": "- [x] done",
+    "checked": true,
+    "html": "☑ done"
+   }
+  ]
+ },
+ {
+  "function": "blocks",
+  "input": "## Design\n\n- [x] done\n",
+  "output": [
+   {
+    "kind": "heading",
+    "start": 1,
+    "end": 1,
+    "html": "Design",
+    "level": 2,
+    "source": "## Design"
+   },
+   {
+    "kind": "blank",
+    "start": 2,
+    "end": 2,
+    "html": "",
+    "source": ""
+   },
+   {
+    "kind": "list",
+    "start": 3,
+    "end": 3,
+    "html": "☑ done",
+    "checked": true,
+    "source": "- [x] done"
+   }
+  ]
+ },
+ {
+  "function": "rows",
+  "input": "   \t ",
+  "output": [
+   {
+    "n": 1,
+    "kind": "blank",
+    "text": "   \t ",
+    "html": ""
+   }
+  ]
+ },
+ {
+  "function": "rows",
+  "input": "words",
+  "output": [
+   {
+    "n": 1,
+    "kind": "text",
+    "text": "words",
+    "html": "words"
+   }
+  ]
+ },
+ {
+  "function": "rows",
+  "input": "####### too deep",
+  "output": [
+   {
+    "n": 1,
+    "kind": "text",
+    "text": "####### too deep",
+    "html": "####### too deep"
+   }
+  ]
+ },
+ {
+  "function": "rows",
+  "input": "### three",
+  "output": [
+   {
+    "n": 1,
+    "kind": "heading",
+    "text": "### three",
+    "level": 3,
+    "html": "three"
+   }
+  ]
+ },
+ {
+  "function": "rows",
+  "input": "## closed ##",
+  "output": [
+   {
+    "n": 1,
+    "kind": "heading",
+    "text": "## closed ##",
+    "level": 2,
+    "html": "closed"
+   }
+  ]
+ },
+ {
+  "function": "rows",
+  "input": "###### six",
+  "output": [
+   {
+    "n": 1,
+    "kind": "heading",
+    "text": "###### six",
+    "level": 6,
+    "html": "six"
+   }
+  ]
+ },
+ {
+  "function": "rows",
+  "input": "#nospace",
+  "output": [
+   {
+    "n": 1,
+    "kind": "text",
+    "text": "#nospace",
+    "html": "#nospace"
+   }
+  ]
+ },
+ {
+  "function": "rows",
+  "input": "- parent\n  - child\n    - grandchild\nplain",
+  "output": [
+   {
+    "n": 1,
+    "kind": "list",
+    "text": "- parent",
+    "html": "parent"
+   },
+   {
+    "n": 2,
+    "kind": "list",
+    "text": "  - child",
+    "html": "child"
+   },
+   {
+    "n": 3,
+    "kind": "list",
+    "text": "    - grandchild",
+    "html": "grandchild"
+   },
+   {
+    "n": 4,
+    "kind": "text",
+    "text": "plain",
+    "html": "plain"
+   }
+  ]
+ },
+ {
+  "function": "rows",
+  "input": "- just a bullet",
+  "output": [
+   {
+    "n": 1,
+    "kind": "list",
+    "text": "- just a bullet",
+    "html": "just a bullet"
+   }
+  ]
+ },
+ {
+  "function": "rows",
+  "input": "1. ordered",
+  "output": [
+   {
+    "n": 1,
+    "kind": "list",
+    "text": "1. ordered",
+    "html": "ordered"
+   }
+  ]
+ },
+ {
+  "function": "rows",
+  "input": "> quoted **line**",
+  "output": [
+   {
+    "n": 1,
+    "kind": "quote",
+    "text": "> quoted **line**",
+    "html": "quoted <b>line</b>"
+   }
+  ]
+ },
+ {
+  "function": "rows",
+  "input": "| a | b |",
+  "output": [
+   {
+    "n": 1,
+    "kind": "table",
+    "text": "| a | b |",
+    "html": "a | b"
+   }
+  ]
+ },
+ {
+  "function": "rows",
+  "input": "|---|---|",
+  "output": [
+   {
+    "n": 1,
+    "kind": "table",
+    "text": "|---|---|",
+    "html": "---|---"
+   }
+  ]
+ },
+ {
+  "function": "rows",
+  "input": "| --- | :---: |",
+  "output": [
+   {
+    "n": 1,
+    "kind": "table",
+    "text": "| --- | :---: |",
+    "html": "--- | :---:"
+   }
+  ]
+ },
+ {
+  "function": "rows",
+  "input": "- [ ] write the renderer",
+  "output": [
+   {
+    "n": 1,
+    "kind": "list",
+    "text": "- [ ] write the renderer",
+    "checked": false,
+    "html": "☐ write the renderer"
+   }
+  ]
+ },
+ {
+  "function": "rows",
+  "input": "- [x] write the renderer",
+  "output": [
+   {
+    "n": 1,
+    "kind": "list",
+    "text": "- [x] write the renderer",
+    "checked": true,
+    "html": "☑ write the renderer"
+   }
+  ]
+ },
+ {
+  "function": "rows",
+  "input": "* [X] done",
+  "output": [
+   {
+    "n": 1,
+    "kind": "list",
+    "text": "* [X] done",
+    "checked": true,
+    "html": "☑ done"
+   }
+  ]
+ },
+ {
+  "function": "rows",
+  "input": "---",
+  "output": [
+   {
+    "n": 1,
+    "kind": "rule",
+    "text": "---",
+    "html": "---"
+   }
+  ]
+ },
+ {
+  "function": "rows",
+  "input": "***",
+  "output": [
+   {
+    "n": 1,
+    "kind": "rule",
+    "text": "***",
+    "html": "***"
+   }
+  ]
+ },
+ {
+  "function": "rows",
+  "input": "___",
+  "output": [
+   {
+    "n": 1,
+    "kind": "rule",
+    "text": "___",
+    "html": "___"
+   }
+  ]
+ },
+ {
+  "function": "rows",
+  "input": "- - -",
+  "output": [
+   {
+    "n": 1,
+    "kind": "rule",
+    "text": "- - -",
+    "html": "- - -"
+   }
+  ]
+ },
+ {
+  "function": "rows",
+  "input": "-----",
+  "output": [
+   {
+    "n": 1,
+    "kind": "rule",
+    "text": "-----",
+    "html": "-----"
+   }
+  ]
+ },
+ {
+  "function": "rows",
+  "input": "a & <b> c",
+  "output": [
+   {
+    "n": 1,
+    "kind": "text",
+    "text": "a & <b> c",
+    "html": "a &amp; &lt;b&gt; c"
+   }
+  ]
+ },
+ {
+  "function": "rows",
+  "input": "<img src=x onerror=\"alert(1)\">",
+  "output": [
+   {
+    "n": 1,
+    "kind": "text",
+    "text": "<img src=x onerror=\"alert(1)\">",
+    "html": "&lt;img src=x onerror=\"alert(1)\"&gt;"
+   }
+  ]
+ },
+ {
+  "function": "rows",
+  "input": "# Reviewer spec\n\nBody with **bold**, *italic*, ~~strike~~ and `code`.\nA [link](https://example.com/x?a=1&b=2) and a bare <script>alert(1)</script>.\n\n## Rules\n\n- top level\n  - nested item\n- [ ] unchecked task\n- [x] checked task\n1. ordered\n\n| column | other |\n|---|---|\n| a | b |\n\n> quoted **line**\n\n---\n\n```python\nvalue = 1\n\n**not bold**\n```\n\nTrailing prose with `a * b * c` inside a code span.",
+  "output": [
+   {
+    "n": 1,
+    "kind": "heading",
+    "text": "# Reviewer spec",
+    "level": 1,
+    "html": "Reviewer spec"
+   },
+   {
+    "n": 2,
+    "kind": "blank",
+    "text": "",
+    "html": ""
+   },
+   {
+    "n": 3,
+    "kind": "text",
+    "text": "Body with **bold**, *italic*, ~~strike~~ and `code`.",
+    "html": "Body with <b>bold</b>, <i>italic</i>, <s>strike</s> and <code>code</code>."
+   },
+   {
+    "n": 4,
+    "kind": "text",
+    "text": "A [link](https://example.com/x?a=1&b=2) and a bare <script>alert(1)</script>.",
+    "html": "A link and a bare &lt;script&gt;alert(1)&lt;/script&gt;."
+   },
+   {
+    "n": 5,
+    "kind": "blank",
+    "text": "",
+    "html": ""
+   },
+   {
+    "n": 6,
+    "kind": "heading",
+    "text": "## Rules",
+    "level": 2,
+    "html": "Rules"
+   },
+   {
+    "n": 7,
+    "kind": "blank",
+    "text": "",
+    "html": ""
+   },
+   {
+    "n": 8,
+    "kind": "list",
+    "text": "- top level",
+    "html": "top level"
+   },
+   {
+    "n": 9,
+    "kind": "list",
+    "text": "  - nested item",
+    "html": "nested item"
+   },
+   {
+    "n": 10,
+    "kind": "list",
+    "text": "- [ ] unchecked task",
+    "checked": false,
+    "html": "☐ unchecked task"
+   },
+   {
+    "n": 11,
+    "kind": "list",
+    "text": "- [x] checked task",
+    "checked": true,
+    "html": "☑ checked task"
+   },
+   {
+    "n": 12,
+    "kind": "list",
+    "text": "1. ordered",
+    "html": "ordered"
+   },
+   {
+    "n": 13,
+    "kind": "blank",
+    "text": "",
+    "html": ""
+   },
+   {
+    "n": 14,
+    "kind": "table",
+    "text": "| column | other |",
+    "html": "column | other"
+   },
+   {
+    "n": 15,
+    "kind": "table",
+    "text": "|---|---|",
+    "html": "---|---"
+   },
+   {
+    "n": 16,
+    "kind": "table",
+    "text": "| a | b |",
+    "html": "a | b"
+   },
+   {
+    "n": 17,
+    "kind": "blank",
+    "text": "",
+    "html": ""
+   },
+   {
+    "n": 18,
+    "kind": "quote",
+    "text": "> quoted **line**",
+    "html": "quoted <b>line</b>"
+   },
+   {
+    "n": 19,
+    "kind": "blank",
+    "text": "",
+    "html": ""
+   },
+   {
+    "n": 20,
+    "kind": "rule",
+    "text": "---",
+    "html": "---"
+   },
+   {
+    "n": 21,
+    "kind": "blank",
+    "text": "",
+    "html": ""
+   },
+   {
+    "n": 22,
+    "kind": "code",
+    "html": "```python",
+    "text": "```python"
+   },
+   {
+    "n": 23,
+    "kind": "code",
+    "html": "value = 1",
+    "text": "value = 1"
+   },
+   {
+    "n": 24,
+    "kind": "code",
+    "html": "",
+    "text": ""
+   },
+   {
+    "n": 25,
+    "kind": "code",
+    "html": "**not bold**",
+    "text": "**not bold**"
+   },
+   {
+    "n": 26,
+    "kind": "code",
+    "html": "```",
+    "text": "```"
+   },
+   {
+    "n": 27,
+    "kind": "blank",
+    "text": "",
+    "html": ""
+   },
+   {
+    "n": 28,
+    "kind": "text",
+    "text": "Trailing prose with `a * b * c` inside a code span.",
+    "html": "Trailing prose with <code>a * b * c</code> inside a code span."
+   }
+  ]
+ },
+ {
+  "function": "rows",
+  "input": "before <script>alert(1)</script> after",
+  "output": [
+   {
+    "n": 1,
+    "kind": "text",
+    "text": "before <script>alert(1)</script> after",
+    "html": "before &lt;script&gt;alert(1)&lt;/script&gt; after"
+   }
+  ]
+ },
+ {
+  "function": "rows",
+  "input": "```\nfirst\n\nthird\n```\nafter",
+  "output": [
+   {
+    "n": 1,
+    "kind": "code",
+    "html": "```",
+    "text": "```"
+   },
+   {
+    "n": 2,
+    "kind": "code",
+    "html": "first",
+    "text": "first"
+   },
+   {
+    "n": 3,
+    "kind": "code",
+    "html": "",
+    "text": ""
+   },
+   {
+    "n": 4,
+    "kind": "code",
+    "html": "third",
+    "text": "third"
+   },
+   {
+    "n": 5,
+    "kind": "code",
+    "html": "```",
+    "text": "```"
+   },
+   {
+    "n": 6,
+    "kind": "text",
+    "text": "after",
+    "html": "after"
+   }
+  ]
+ },
+ {
+  "function": "rows",
+  "input": "````\n```\n````\ntext",
+  "output": [
+   {
+    "n": 1,
+    "kind": "code",
+    "html": "````",
+    "text": "````"
+   },
+   {
+    "n": 2,
+    "kind": "code",
+    "html": "```",
+    "text": "```"
+   },
+   {
+    "n": 3,
+    "kind": "code",
+    "html": "````",
+    "text": "````"
+   },
+   {
+    "n": 4,
+    "kind": "text",
+    "text": "text",
+    "html": "text"
+   }
+  ]
+ },
+ {
+  "function": "rows",
+  "input": "```\n**x** and <b>y</b>\n```",
+  "output": [
+   {
+    "n": 1,
+    "kind": "code",
+    "html": "```",
+    "text": "```"
+   },
+   {
+    "n": 2,
+    "kind": "code",
+    "html": "**x** and &lt;b&gt;y&lt;/b&gt;",
+    "text": "**x** and <b>y</b>"
+   },
+   {
+    "n": 3,
+    "kind": "code",
+    "html": "```",
+    "text": "```"
+   }
+  ]
+ },
+ {
+  "function": "rows",
+  "input": "```\n~~~\nstill code\n```\ntext",
+  "output": [
+   {
+    "n": 1,
+    "kind": "code",
+    "html": "```",
+    "text": "```"
+   },
+   {
+    "n": 2,
+    "kind": "code",
+    "html": "~~~",
+    "text": "~~~"
+   },
+   {
+    "n": 3,
+    "kind": "code",
+    "html": "still code",
+    "text": "still code"
+   },
+   {
+    "n": 4,
+    "kind": "code",
+    "html": "```",
+    "text": "```"
+   },
+   {
+    "n": 5,
+    "kind": "text",
+    "text": "text",
+    "html": "text"
+   }
+  ]
+ },
+ {
+  "function": "rows",
+  "input": "intro\n```py\nx = 1\n\n# not a heading\n",
+  "output": [
+   {
+    "n": 1,
+    "kind": "text",
+    "text": "intro",
+    "html": "intro"
+   },
+   {
+    "n": 2,
+    "kind": "code",
+    "html": "```py",
+    "text": "```py"
+   },
+   {
+    "n": 3,
+    "kind": "code",
+    "html": "x = 1",
+    "text": "x = 1"
+   },
+   {
+    "n": 4,
+    "kind": "code",
+    "html": "",
+    "text": ""
+   },
+   {
+    "n": 5,
+    "kind": "code",
+    "html": "# not a heading",
+    "text": "# not a heading"
+   }
+  ]
+ },
+ {
+  "function": "rows",
+  "input": "run `a * b * c` now",
+  "output": [
+   {
+    "n": 1,
+    "kind": "text",
+    "text": "run `a * b * c` now",
+    "html": "run <code>a * b * c</code> now"
+   }
+  ]
+ },
+ {
+  "function": "rows",
+  "input": "`**not bold**`",
+  "output": [
+   {
+    "n": 1,
+    "kind": "text",
+    "text": "`**not bold**`",
+    "html": "<code>**not bold**</code>"
+   }
+  ]
+ },
+ {
+  "function": "rows",
+  "input": "`~~not strike~~`",
+  "output": [
+   {
+    "n": 1,
+    "kind": "text",
+    "text": "`~~not strike~~`",
+    "html": "<code>~~not strike~~</code>"
+   }
+  ]
+ },
+ {
+  "function": "rows",
+  "input": "[not a link]",
+  "output": [
+   {
+    "n": 1,
+    "kind": "text",
+    "text": "[not a link]",
+    "html": "[not a link]"
+   }
+  ]
+ },
+ {
+  "function": "rows",
+  "input": "a **bold with `code` inside** tail",
+  "output": [
+   {
+    "n": 1,
+    "kind": "text",
+    "text": "a **bold with `code` inside** tail",
+    "html": "a <b>bold with <code>code</code> inside</b> tail"
+   }
+  ]
+ },
+ {
+  "function": "rows",
+  "input": "**b** __b__ *i* _i_ ~~s~~",
+  "output": [
+   {
+    "n": 1,
+    "kind": "text",
+    "text": "**b** __b__ *i* _i_ ~~s~~",
+    "html": "<b>b</b> <b>b</b> <i>i</i> <i>i</i> <s>s</s>"
+   }
+  ]
+ },
+ {
+  "function": "rows",
+  "input": "`**x**`",
+  "output": [
+   {
+    "n": 1,
+    "kind": "text",
+    "text": "`**x**`",
+    "html": "<code>**x**</code>"
+   }
+  ]
+ },
+ {
+  "function": "rows",
+  "input": "see [the spec](https://example.com/a?b=1&c=2) now",
+  "output": [
+   {
+    "n": 1,
+    "kind": "text",
+    "text": "see [the spec](https://example.com/a?b=1&c=2) now",
+    "html": "see the spec now"
+   }
+  ]
+ },
+ {
+  "function": "rows",
+  "input": "[**bold** label](u)",
+  "output": [
+   {
+    "n": 1,
+    "kind": "text",
+    "text": "[**bold** label](u)",
+    "html": "<b>bold</b> label"
+   }
+  ]
+ },
+ {
+  "function": "rows",
+  "input": "snake_case_name",
+  "output": [
+   {
+    "n": 1,
+    "kind": "text",
+    "text": "snake_case_name",
+    "html": "snake_case_name"
+   }
+  ]
+ },
+ {
+  "function": "rows",
+  "input": "﻿a\r\nb\r\n",
+  "output": [
+   {
+    "n": 1,
+    "kind": "text",
+    "text": "a",
+    "html": "a"
+   },
+   {
+    "n": 2,
+    "kind": "text",
+    "text": "b",
+    "html": "b"
+   }
+  ]
+ },
+ {
+  "function": "rows",
+  "input": "# h\r\n\r\n- a\r\n",
+  "output": [
+   {
+    "n": 1,
+    "kind": "heading",
+    "text": "# h",
+    "level": 1,
+    "html": "h"
+   },
+   {
+    "n": 2,
+    "kind": "blank",
+    "text": "",
+    "html": ""
+   },
+   {
+    "n": 3,
+    "kind": "list",
+    "text": "- a",
+    "html": "a"
+   }
+  ]
+ },
+ {
+  "function": "rows",
+  "input": "# h\n\n- a\n",
+  "output": [
+   {
+    "n": 1,
+    "kind": "heading",
+    "text": "# h",
+    "level": 1,
+    "html": "h"
+   },
+   {
+    "n": 2,
+    "kind": "blank",
+    "text": "",
+    "html": ""
+   },
+   {
+    "n": 3,
+    "kind": "list",
+    "text": "- a",
+    "html": "a"
+   }
+  ]
+ },
+ {
+  "function": "rows",
+  "input": "﻿# heading\nbody",
+  "output": [
+   {
+    "n": 1,
+    "kind": "heading",
+    "text": "# heading",
+    "level": 1,
+    "html": "heading"
+   },
+   {
+    "n": 2,
+    "kind": "text",
+    "text": "body",
+    "html": "body"
+   }
+  ]
+ },
+ {
+  "function": "rows",
+  "input": "﻿",
+  "output": []
+ },
+ {
+  "function": "rows",
+  "input": "\n",
+  "output": [
+   {
+    "n": 1,
+    "kind": "blank",
+    "text": "",
+    "html": ""
+   }
+  ]
+ },
+ {
+  "function": "rows",
+  "input": "just one line",
+  "output": [
+   {
+    "n": 1,
+    "kind": "text",
+    "text": "just one line",
+    "html": "just one line"
+   }
+  ]
+ },
+ {
+  "function": "rows",
+  "input": "one\ntwo\n",
+  "output": [
+   {
+    "n": 1,
+    "kind": "text",
+    "text": "one",
+    "html": "one"
+   },
+   {
+    "n": 2,
+    "kind": "text",
+    "text": "two",
+    "html": "two"
+   }
+  ]
+ },
+ {
+  "function": "rows",
+  "input": "one\ntwo",
+  "output": [
+   {
+    "n": 1,
+    "kind": "text",
+    "text": "one",
+    "html": "one"
+   },
+   {
+    "n": 2,
+    "kind": "text",
+    "text": "two",
+    "html": "two"
+   }
+  ]
+ },
+ {
+  "function": "rows",
+  "input": "`",
+  "output": [
+   {
+    "n": 1,
+    "kind": "text",
+    "text": "`",
+    "html": "`"
+   }
+  ]
+ },
+ {
+  "function": "rows",
+  "input": "**",
+  "output": [
+   {
+    "n": 1,
+    "kind": "text",
+    "text": "**",
+    "html": "**"
+   }
+  ]
+ },
+ {
+  "function": "rows",
+  "input": "[](",
+  "output": [
+   {
+    "n": 1,
+    "kind": "text",
+    "text": "[](",
+    "html": "[]("
+   }
+  ]
+ },
+ {
+  "function": "rows",
+  "input": "[]()",
+  "output": [
+   {
+    "n": 1,
+    "kind": "text",
+    "text": "[]()",
+    "html": ""
+   }
+  ]
+ },
+ {
+  "function": "rows",
+  "input": "- [ ]",
+  "output": [
+   {
+    "n": 1,
+    "kind": "list",
+    "text": "- [ ]",
+    "checked": false,
+    "html": "☐ "
+   }
+  ]
+ },
+ {
+  "function": "rows",
+  "input": "|",
+  "output": [
+   {
+    "n": 1,
+    "kind": "text",
+    "text": "|",
+    "html": "|"
+   }
+  ]
+ },
+ {
+  "function": "rows",
+  "input": "||",
+  "output": [
+   {
+    "n": 1,
+    "kind": "text",
+    "text": "||",
+    "html": "||"
+   }
+  ]
+ },
+ {
+  "function": "rows",
+  "input": ">",
+  "output": [
+   {
+    "n": 1,
+    "kind": "quote",
+    "text": ">",
+    "html": ""
+   }
+  ]
+ },
+ {
+  "function": "rows",
+  "input": "#",
+  "output": [
+   {
+    "n": 1,
+    "kind": "text",
+    "text": "#",
+    "html": "#"
+   }
+  ]
+ },
+ {
+  "function": "rows",
+  "input": "\u0000\u00005\u0000",
+  "output": [
+   {
+    "n": 1,
+    "kind": "text",
+    "text": "\u0000\u00005\u0000",
+    "html": "\u0000\u00005\u0000"
+   }
+  ]
+ },
+ {
+  "function": "rows",
+  "input": "a`b``c",
+  "output": [
+   {
+    "n": 1,
+    "kind": "text",
+    "text": "a`b``c",
+    "html": "a<code>b</code>`c"
+   }
+  ]
+ },
+ {
+  "function": "rows",
+  "input": "intro\n\nfirst\nsecond\n\n## Next\n",
+  "output": [
+   {
+    "n": 1,
+    "kind": "text",
+    "text": "intro",
+    "html": "intro"
+   },
+   {
+    "n": 2,
+    "kind": "blank",
+    "text": "",
+    "html": ""
+   },
+   {
+    "n": 3,
+    "kind": "text",
+    "text": "first",
+    "html": "first"
+   },
+   {
+    "n": 4,
+    "kind": "text",
+    "text": "second",
+    "html": "second"
+   },
+   {
+    "n": 5,
+    "kind": "blank",
+    "text": "",
+    "html": ""
+   },
+   {
+    "n": 6,
+    "kind": "heading",
+    "text": "## Next",
+    "level": 2,
+    "html": "Next"
+   }
+  ]
+ },
+ {
+  "function": "blocks",
+  "input": "intro\n\nfirst\nsecond\n\n## Next\n",
+  "output": [
+   {
+    "kind": "text",
+    "start": 1,
+    "end": 1,
+    "html": "intro",
+    "source": "intro"
+   },
+   {
+    "kind": "blank",
+    "start": 2,
+    "end": 2,
+    "html": "",
+    "source": ""
+   },
+   {
+    "kind": "text",
+    "start": 3,
+    "end": 4,
+    "html": "first\nsecond",
+    "source": "first\nsecond"
+   },
+   {
+    "kind": "blank",
+    "start": 5,
+    "end": 5,
+    "html": "",
+    "source": ""
+   },
+   {
+    "kind": "heading",
+    "start": 6,
+    "end": 6,
+    "html": "Next",
+    "level": 2,
+    "source": "## Next"
+   }
+  ]
+ },
+ {
+  "function": "rows",
+  "input": "## Goals\n\ntext\n",
+  "output": [
+   {
+    "n": 1,
+    "kind": "heading",
+    "text": "## Goals",
+    "level": 2,
+    "html": "Goals"
+   },
+   {
+    "n": 2,
+    "kind": "blank",
+    "text": "",
+    "html": ""
+   },
+   {
+    "n": 3,
+    "kind": "text",
+    "text": "text",
+    "html": "text"
+   }
+  ]
+ },
+ {
+  "function": "blocks",
+  "input": "## Goals\n\ntext\n",
+  "output": [
+   {
+    "kind": "heading",
+    "start": 1,
+    "end": 1,
+    "html": "Goals",
+    "level": 2,
+    "source": "## Goals"
+   },
+   {
+    "kind": "blank",
+    "start": 2,
+    "end": 2,
+    "html": "",
+    "source": ""
+   },
+   {
+    "kind": "text",
+    "start": 3,
+    "end": 3,
+    "html": "text",
+    "source": "text"
+   }
+  ]
+ },
+ {
+  "function": "rows",
+  "input": "## Title\n\nA **bold** line\nand a plain one\n\n- item\n\n> quoted\n",
+  "output": [
+   {
+    "n": 1,
+    "kind": "heading",
+    "text": "## Title",
+    "level": 2,
+    "html": "Title"
+   },
+   {
+    "n": 2,
+    "kind": "blank",
+    "text": "",
+    "html": ""
+   },
+   {
+    "n": 3,
+    "kind": "text",
+    "text": "A **bold** line",
+    "html": "A <b>bold</b> line"
+   },
+   {
+    "n": 4,
+    "kind": "text",
+    "text": "and a plain one",
+    "html": "and a plain one"
+   },
+   {
+    "n": 5,
+    "kind": "blank",
+    "text": "",
+    "html": ""
+   },
+   {
+    "n": 6,
+    "kind": "list",
+    "text": "- item",
+    "html": "item"
+   },
+   {
+    "n": 7,
+    "kind": "blank",
+    "text": "",
+    "html": ""
+   },
+   {
+    "n": 8,
+    "kind": "quote",
+    "text": "> quoted",
+    "html": "quoted"
+   }
+  ]
+ }
+]

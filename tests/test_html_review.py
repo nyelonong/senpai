@@ -11,31 +11,32 @@ import tempfile
 import time
 import unittest
 import urllib.error
+import urllib.parse
 import urllib.request
-from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT / "scripts"))
-
-import html_review  # noqa: E402  (the reviewer lives in scripts/ and is not a package)
-import task_review  # noqa: E402
-
-CLIENT = ROOT / "scripts/task_review.py"
-REVIEWER = ROOT / "scripts/html_review.py"
 sys.path.insert(0, str(ROOT / "tests"))
 import commands  # noqa: E402
+
 REVIEW_ID = "0123456789abcdef0123456789abcdef"
+GIT_ENV = {"GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_SYSTEM": os.devnull, "GIT_TERMINAL_PROMPT": "0"}
+FONT_NAMES = (
+    "jetbrains-mono-400.woff2",
+    "jetbrains-mono-700.woff2",
+    "inter-latin-var.woff2",
+    "source-serif-4-latin-var.woff2",
+)
 
 
-def review_request(root: str, **overrides) -> task_review.ReviewRequest:
+def review_request(root: str, **overrides) -> dict:
     payload = {
-        "version": "1",
+        "version": commands.PROTOCOL_VERSION,
         "review_id": REVIEW_ID,
         "criterion": "ship it",
         "repositories": [{"root": root}],
     }
     payload.update(overrides)
-    return task_review.parse_request_json(json.dumps(payload))
+    return payload
 
 
 def get(url: str, timeout: float = 5.0) -> tuple[int, bytes, dict[str, str]]:
@@ -54,6 +55,57 @@ def post(url: str, payload: object, timeout: float = 5.0) -> tuple[int, bytes]:
             return response.status, response.read()
     except urllib.error.HTTPError as error:
         return error.code, error.read()
+
+
+def stop(process: subprocess.Popen) -> None:
+    if process.poll() is None:
+        process.kill()
+    process.communicate(timeout=30)
+
+
+class Review:
+    """A running `senpai html-review` process and the page it serves."""
+
+    def __init__(self, process: subprocess.Popen, url: str, url_file: Path, api: str) -> None:
+        self.process = process
+        self.url = url
+        self.url_file = url_file
+        self.api = api
+        parts = urllib.parse.urlsplit(url)
+        self.base_url = f"{parts.scheme}://{parts.netloc}"
+        self.token = parts.path.strip("/")
+        self._payload: "dict | None" = None
+        self._finished: "tuple[int, str, str] | None" = None
+
+    @property
+    def payload(self) -> dict:
+        if self._payload is None:
+            status, body, _ = get(f"{self.url}{self.api}")
+            if status != 200:
+                raise AssertionError(f"the payload route answered {status}")
+            self._payload = json.loads(body)
+        return self._payload
+
+    def still_open(self, seconds: float) -> bool:
+        deadline = time.monotonic() + seconds
+        while time.monotonic() < deadline:
+            if self.process.poll() is not None:
+                return False
+            time.sleep(0.05)
+        return self.process.poll() is None
+
+    def finish(self, timeout: float = 30.0) -> tuple[int, str, str]:
+        """Exit code, stdout and stderr; the pipes are only read once the process has ended."""
+        if self._finished is None:
+            stdout, stderr = self.process.communicate(timeout=timeout)
+            self._finished = (self.process.returncode, stdout, stderr)
+        return self._finished
+
+    def result(self, timeout: float = 30.0) -> dict:
+        code, stdout, stderr = self.finish(timeout)
+        if code != commands.EXIT_OK or len(stdout.splitlines()) != 1:
+            raise AssertionError(f"expected one result line, got exit {code}: {stdout!r} {stderr!r}")
+        return json.loads(stdout)
 
 
 class ReviewCase(unittest.TestCase):
@@ -85,22 +137,58 @@ class ReviewCase(unittest.TestCase):
             capture_output=True,
             text=True,
             check=True,
-            env={**os.environ, "GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_SYSTEM": os.devnull},
+            env={**os.environ, **GIT_ENV},
         )
         return completed.stdout
 
     @property
-    def request(self) -> task_review.ReviewRequest:
+    def request(self) -> dict:
         return review_request(str(self.root))
 
-    def session(self, request: "task_review.ReviewRequest | None" = None, **kwargs) -> html_review.ReviewSession:
-        """A served review the test can talk to directly; no browser, no network."""
-        kwargs.setdefault("open_browser", False)
-        session = html_review.start_review_server(
-            self.request if request is None else request, **kwargs
+    def reviewer_env(self, browser: bool = False, **extra: str) -> dict[str, str]:
+        dropped = (commands.NO_BROWSER_ENV, commands.URL_FILE_ENV, commands.LIFETIME_ENV, commands.IDLE_ENV)
+        env = {key: value for key, value in os.environ.items() if key not in dropped}
+        env.update(GIT_ENV)
+        if not browser:
+            env[commands.NO_BROWSER_ENV] = "1"
+        env.update(extra)
+        return env
+
+    def session(
+        self,
+        request: "dict | None" = None,
+        *,
+        flag: str = "--review",
+        browser: bool = False,
+        env: "dict[str, str] | None" = None,
+    ) -> Review:
+        """A served review the test can talk to over HTTP, with no browser unless asked."""
+        url_file = self.base / f"review-url-{time.monotonic_ns()}"
+        environment = self.reviewer_env(browser, **(env or {}))
+        environment[commands.URL_FILE_ENV] = str(url_file)
+        process = subprocess.Popen(
+            [*commands.reviewer(), flag, json.dumps(self.request if request is None else request)],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            env=environment,
         )
-        self.addCleanup(session.close)
-        return session
+        self.addCleanup(stop, process)
+        deadline = time.monotonic() + 30
+        while True:
+            if process.poll() is not None:
+                stdout, stderr = process.communicate(timeout=30)
+                self.fail(f"the reviewer exited {process.returncode} before it served a page: {stdout!r} {stderr!r}")
+            try:
+                text = url_file.read_text(encoding="utf-8")
+            except OSError:
+                text = ""
+            if text.endswith("\n"):
+                break
+            self.assertLess(time.monotonic(), deadline, "the reviewer never published its page")
+            time.sleep(0.02)
+        api = "api/doc" if flag == "--review-doc" else "api/review"
+        return Review(process, text.strip(), url_file, api)
 
     def file(self, payload: dict, path: str) -> dict:
         for repository in payload["repositories"]:
@@ -109,105 +197,27 @@ class ReviewCase(unittest.TestCase):
                     return item
         self.fail(f"{path} is not in the payload")
 
-
-# ---------------------------------------------------------------------------
-# the patch reader
-# ---------------------------------------------------------------------------
-
-
-class PatchParsingTests(unittest.TestCase):
-    PATCH = (
-        b"diff --git a/a.py b/a.py\n"
-        b"index 1111111..2222222 100644\n"
-        b"--- a/a.py\n"
-        b"+++ b/a.py\n"
-        b"@@ -1,4 +1,4 @@ def handler():\n"
-        b" keep\n"
-        b"-gone\n"
-        b"+fresh\n"
-        b" \n"
-        b"\\ No newline at end of file\n"
-    )
-
-    def setUp(self) -> None:
-        self.lines, self.added, self.removed, self.binary = html_review.parse_patch(self.PATCH)
-
-    def test_splits_a_patch_into_typed_lines(self) -> None:
-        self.assertEqual(
-            ["meta", "meta", "meta", "meta", "meta", "context", "remove", "add", "context", "meta"],
-            [line.type for line in self.lines],
+    def run_reviewer(self, *args: str, stdin: str = "", env: "dict[str, str] | None" = None) -> subprocess.CompletedProcess:
+        return subprocess.run(
+            [*commands.reviewer(), *args],
+            input=stdin,
+            capture_output=True,
+            text=True,
+            env=self.reviewer_env(**(env or {})),
+            timeout=60,
         )
 
-    def test_numbers_both_sides_of_the_diff(self) -> None:
-        context, remove, add, blank = self.lines[5], self.lines[6], self.lines[7], self.lines[8]
-        self.assertEqual((1, 1), (context.old_line, context.new_line))
-        self.assertEqual((2, None), (remove.old_line, remove.new_line))
-        self.assertEqual((None, 2), (add.old_line, add.new_line))
-        self.assertEqual((3, 3), (blank.old_line, blank.new_line))
-        self.assertEqual("", blank.text, "a blank context line carries no text of its own")
-
-    def test_keeps_the_text_without_its_prefix(self) -> None:
-        self.assertEqual("keep", self.lines[5].text)
-        self.assertEqual("gone", self.lines[6].text)
-        self.assertEqual("fresh", self.lines[7].text)
-
-    def test_counts_additions_and_removals(self) -> None:
-        self.assertEqual((1, 1), (self.added, self.removed))
-        self.assertFalse(self.binary)
-
-    def test_headers_have_no_position_to_comment_on(self) -> None:
-        for line in self.lines:
-            if line.type == "meta":
-                self.assertIsNone(line.old_line)
-                self.assertIsNone(line.new_line)
-                self.assertFalse(line.selectable)
-            else:
-                self.assertTrue(line.selectable)
-
-    def test_a_pure_addition_hunk_has_no_old_side(self) -> None:
-        lines, added, removed, _ = html_review.parse_patch(
-            b"diff --git a/n.txt b/n.txt\n--- /dev/null\n+++ b/n.txt\n@@ -0,0 +1,2 @@\n+one\n+two\n"
+    def fingerprint(self, *paths: str) -> str:
+        scope = ["--paths", ",".join(paths)] if paths else []
+        completed = subprocess.run(
+            [*commands.client(), "preflight", "--criterion", "ship it", "--repo", str(self.root), *scope],
+            capture_output=True,
+            text=True,
+            env=self.reviewer_env(),
+            timeout=60,
         )
-        self.assertEqual((2, 0), (added, removed))
-        self.assertEqual([(None, 1), (None, 2)], [(line.old_line, line.new_line) for line in lines[4:]])
-
-    def test_a_deleted_file_still_numbers_its_old_lines(self) -> None:
-        lines, added, removed, _ = html_review.parse_patch(
-            b"diff --git a/gone.txt b/gone.txt\ndeleted file mode 100644\n"
-            b"--- a/gone.txt\n+++ /dev/null\n@@ -1,2 +0,0 @@\n-one\n-two\n"
-        )
-        self.assertEqual((0, 2), (added, removed))
-        self.assertEqual([(1, None), (2, None)], [(line.old_line, line.new_line) for line in lines[5:]])
-
-    def test_marks_a_binary_patch(self) -> None:
-        lines, _, _, binary = html_review.parse_patch(
-            b"diff --git a/logo.png b/logo.png\nindex 1111111..2222222 100644\n"
-            b"Binary files a/logo.png and b/logo.png differ\n"
-        )
-        self.assertTrue(binary)
-        self.assertEqual([], [line for line in lines if line.selectable])
-
-    def test_counts_are_survived_by_a_rename_with_no_content_change(self) -> None:
-        lines, added, removed, binary = html_review.parse_patch(
-            b"diff --git a/old.txt b/new.txt\nsimilarity index 100%\nrename from old.txt\nrename to new.txt\n"
-        )
-        self.assertEqual((0, 0, False), (added, removed, binary))
-        self.assertEqual([], [line for line in lines if line.selectable])
-
-    def test_a_form_feed_inside_a_line_does_not_shift_the_lines_after_it(self) -> None:
-        # git copies a form feed into the patch as ordinary file content, so
-        # splitting on it would cut the line in two and renumber everything
-        # below it, and a comment would anchor to the wrong line.
-        lines, added, removed, _ = html_review.parse_patch(
-            b"diff --git a/x.txt b/x.txt\n--- a/x.txt\n+++ b/x.txt\n"
-            b"@@ -1,2 +1,3 @@\n alpha\n+bravo\x0ccharlie\n delta\n"
-        )
-        self.assertEqual((1, 0), (added, removed))
-        self.assertEqual(
-            [("context", 1, 1), ("add", None, 2), ("context", 2, 3)],
-            [(line.type, line.old_line, line.new_line) for line in lines[4:]],
-        )
-        self.assertEqual("bravo\x0ccharlie", lines[5].text, "the line keeps the character git sent")
+        self.assertEqual(commands.EXIT_OK, completed.returncode, completed.stderr)
+        return json.loads(completed.stdout)["fingerprint"]
 
 
 class PayloadLineNumberingTests(ReviewCase):
@@ -244,34 +254,27 @@ class PayloadLineNumberingTests(ReviewCase):
 
 class GuidedPayloadTests(ReviewCase):
     def test_guide_resolves_captured_scope_without_changing_actual_diff(self):
-        plain = html_review.build_payload(self.request)
+        plain = self.session().payload
         value = {
             "version": 1,
-            "fingerprint": task_review.collect_snapshot(self.request.repositories).fingerprint,
+            "fingerprint": self.fingerprint(),
             "summary": "<script>literal text</script>", "before": "One printed line", "after": "Two printed lines",
             "chapters": [{"title": "Core output", "summary": "Print the second value",
                           "files": [{"repository": str(self.root), "path": "a.py"}]}],
         }
-        guided = html_review.build_payload(review_request(str(self.root), guide=value))
+        guided = self.session(review_request(str(self.root), guide=value)).payload
         self.assertEqual(plain["repositories"], guided["repositories"])
         self.assertEqual(plain["totals"], guided["totals"])
         self.assertEqual([[0], [1]], [chapter["file_indices"] for chapter in guided["guide"]["chapters"]])
         self.assertEqual(value["summary"], guided["guide"]["summary"])
         (self.root / "a.py").write_text("changed again\n")
-        with self.assertRaisesRegex(task_review.ResultError, "stale"):
-            html_review.build_payload(review_request(str(self.root), guide=value))
+        stale = self.run_reviewer("--review", json.dumps(review_request(str(self.root), guide=value)))
+        self.assertEqual(commands.EXIT_ERROR, stale.returncode)
+        self.assertEqual("", stale.stdout)
+        self.assertIn("stale", stale.stderr)
 
 
 class RequestValidationTests(ReviewCase):
-    def run_reviewer(self, *args: str, stdin: str = "") -> subprocess.CompletedProcess:
-        return subprocess.run(
-            [*commands.reviewer(), *args],
-            input=stdin,
-            capture_output=True,
-            text=True,
-            timeout=60,
-        )
-
     def test_rejects_what_rdg_rejects(self) -> None:
         root = str(self.root)
         cases = {
@@ -292,18 +295,18 @@ class RequestValidationTests(ReviewCase):
                 payload = dict(base)
                 payload.update(override)
                 result = self.run_reviewer("--review", json.dumps(payload))
-                self.assertEqual(html_review.EXIT_ERROR, result.returncode, result.stderr)
+                self.assertEqual(commands.EXIT_ERROR, result.returncode, result.stderr)
                 self.assertEqual("", result.stdout, "a rejected request must print no result line")
-                self.assertIn(html_review.PRODUCER, result.stderr)
+                self.assertIn(commands.REVIEWER_PRODUCER, result.stderr)
 
     def test_rejects_a_request_that_is_not_json(self) -> None:
         result = self.run_reviewer("--review", "not json")
-        self.assertEqual(html_review.EXIT_ERROR, result.returncode)
-        self.assertIn(html_review.PRODUCER, result.stderr)
+        self.assertEqual(commands.EXIT_ERROR, result.returncode)
+        self.assertIn(commands.REVIEWER_PRODUCER, result.stderr)
 
     def test_requires_a_request(self) -> None:
         result = self.run_reviewer()
-        self.assertEqual(html_review.EXIT_ERROR, result.returncode)
+        self.assertEqual(commands.EXIT_ERROR, result.returncode)
         self.assertIn("--review", result.stderr)
 
     def test_reads_the_request_from_stdin_when_the_value_is_absent(self) -> None:
@@ -312,13 +315,14 @@ class RequestValidationTests(ReviewCase):
             "repositories": [{"root": str(self.root)}],
         })
         result = self.run_reviewer("--review", stdin=payload)
-        self.assertEqual(html_review.EXIT_ERROR, result.returncode)
+        self.assertEqual(commands.EXIT_ERROR, result.returncode)
         self.assertIn("criterion must not be empty", result.stderr)
 
     def test_fails_closed_when_a_repository_is_not_a_worktree(self) -> None:
-        request = review_request(str(self.base / "nowhere"))
-        with self.assertRaises(task_review.GitError):
-            html_review.build_payload(request)
+        result = self.run_reviewer("--review", json.dumps(review_request(str(self.base / "nowhere"))))
+        self.assertEqual(commands.EXIT_ERROR, result.returncode, result.stderr)
+        self.assertEqual("", result.stdout)
+        self.assertIn(commands.REVIEWER_PRODUCER, result.stderr)
 
 
 # ---------------------------------------------------------------------------
@@ -358,23 +362,25 @@ class ServerRouteTests(ReviewCase):
                 self.assertEqual(404, status)
         status, _ = post(f"{session.base_url}/api/decision", {"decision": "approve", "annotations": []})
         self.assertEqual(404, status, "a decision without the token must not be recorded")
-        self.assertIsNone(session.result(timeout=0.5))
+        self.assertTrue(session.still_open(0.5))
 
     def test_serves_the_bundled_code_font(self) -> None:
         # The code font ships with the reviewer and is served from the review's
         # own origin: no network, and no third party named in the CSP.
         session = self.session()
-        for name, path in html_review.FONT_FILES.items():
-            self.assertTrue(path.is_file(), f"{name} must ship with the reviewer")
-        status, body, headers = get(f"{session.base_url}/{session.token}/font/jetbrains-mono-400.woff2")
-        self.assertEqual(200, status)
-        self.assertEqual("font/woff2", headers["Content-Type"])
-        self.assertEqual(html_review.FONT_FILES["jetbrains-mono-400.woff2"].read_bytes()[:4], body[:4])
+        for name in FONT_NAMES:
+            self.assertTrue((ROOT / "assets/fonts" / name).is_file(), f"{name} must ship with the reviewer")
+        for name in FONT_NAMES:
+            with self.subTest(name=name):
+                status, body, headers = get(f"{session.url}font/{name}")
+                self.assertEqual(200, status)
+                self.assertEqual("font/woff2", headers["Content-Type"])
+                self.assertEqual((ROOT / "assets/fonts" / name).read_bytes(), body)
         for path in ("/font/jetbrains-mono-400.woff2", f"/wrong{session.token}/font/jetbrains-mono-400.woff2"):
             with self.subTest(path=path):
                 status, _, _ = get(f"{session.base_url}{path}")
                 self.assertEqual(404, status, "a font must not be served without the review token")
-        status, _, _ = get(f"{session.base_url}/{session.token}/font/jetbrains-mono-400.woff2.map")
+        status, _, _ = get(f"{session.url}font/jetbrains-mono-400.woff2.map")
         self.assertEqual(404, status, "the font route serves bundled files only")
 
     def test_the_page_uses_the_bundled_font_and_nerd_glyphs(self) -> None:
@@ -395,7 +401,7 @@ class ServerRouteTests(ReviewCase):
 
     def test_answers_the_wrong_method(self) -> None:
         session = self.session()
-        status, _ = post(f"{session.base_url}/{session.token}/api/review", {})
+        status, _ = post(f"{session.url}api/review", {})
         self.assertEqual(405, status)
 
     def test_publishes_the_criterion_the_repositories_and_the_diff(self) -> None:
@@ -423,7 +429,7 @@ class ServerRouteTests(ReviewCase):
     def test_reports_a_scope_and_a_deletion(self) -> None:
         self.git("rm", "-q", "other/b.txt")
         scoped = review_request(str(self.root), repositories=[{"root": str(self.root), "paths": ["other"]}])
-        payload = html_review.build_payload(scoped)
+        payload = self.session(scoped).payload
         self.assertEqual([["other"]], [item["paths"] for item in payload["repositories"]])
         deleted = self.file(payload, "other/b.txt")
         self.assertEqual("deleted", deleted["status"])
@@ -432,8 +438,7 @@ class ServerRouteTests(ReviewCase):
 
     def test_keeps_a_binary_file_uncommentable(self) -> None:
         (self.root / "logo.png").write_bytes(b"\x89PNG\r\n\x1a\n\x00\x01\x02")
-        payload = html_review.build_payload(self.request)
-        binary = self.file(payload, "logo.png")
+        binary = self.file(self.session().payload, "logo.png")
         self.assertTrue(binary["binary"])
         self.assertEqual([], [line for line in binary["lines"] if line["type"] != "meta"])
 
@@ -453,60 +458,52 @@ class ServerRouteTests(ReviewCase):
                 "annotations": [{"text": "x", "target": {"scope": "line", "repository": str(self.root), "path": "ghost.py", "side": "new", "start_line": 1, "end_line": 1}}],
             },
         }
+        session = self.session()
         for label, payload in cases.items():
             with self.subTest(case=label):
-                session = self.session()
                 status, body = post(f"{session.url}api/decision", payload)
                 self.assertEqual(400, status, body)
                 self.assertIn("error", json.loads(body))
-                self.assertIsNone(session.result(timeout=0.2), "a refused decision must leave the review open")
+                self.assertTrue(session.still_open(0.2), "a refused decision must leave the review open")
 
     def test_refuses_a_decision_that_is_not_json(self) -> None:
         session = self.session()
         status, _ = post(f"{session.url}api/decision", b"{not json")
         self.assertEqual(400, status)
-        self.assertIsNone(session.result(timeout=0.2))
+        self.assertTrue(session.still_open(0.2))
 
     def test_records_a_decision_once_and_stops(self) -> None:
         session = self.session()
         status, _ = post(f"{session.url}api/decision", {"decision": "cancelled", "annotations": []})
         self.assertEqual(204, status)
-        result = session.result(timeout=5)
+        try:
+            post(f"{session.url}api/decision", {"decision": "approve", "annotations": []}, timeout=2)
+        except (urllib.error.URLError, ConnectionError, TimeoutError):
+            pass
         self.assertEqual(
             {"version": "1", "review_id": REVIEW_ID, "decision": "cancelled", "annotations": []},
-            result,
+            session.result(),
+            "a decision is final",
         )
-        later = html_review.build_result(self.request, "approve", [])
-        session.submit(later)
-        self.assertEqual("cancelled", session.result(timeout=0)["decision"], "a decision is final")
 
     def test_carries_a_line_comment_with_both_of_its_ends(self) -> None:
         session = self.session()
+        target = {
+            "scope": "line", "repository": str(self.root), "path": "a.py",
+            "side": "new", "start_line": 1, "end_line": 2,
+        }
         status, _ = post(
             f"{session.url}api/decision",
-            {
-                "decision": "request-changes",
-                "annotations": [
-                    {
-                        "text": "guard this call",
-                        "target": {
-                            "scope": "line", "repository": str(self.root), "path": "a.py",
-                            "side": "new", "start_line": 1, "end_line": 2,
-                        },
-                    }
-                ],
-            },
+            {"decision": "request-changes", "annotations": [{"text": "guard this call", "target": target}]},
         )
         self.assertEqual(204, status)
-        annotation = session.result(timeout=5)["annotations"][0]
         self.assertEqual(
             {
-                "scope": "line", "repository": str(self.root), "path": "a.py",
-                "side": "new", "start_line": 1, "end_line": 2,
+                "version": "1", "review_id": REVIEW_ID, "decision": "request-changes",
+                "annotations": [{"text": "guard this call", "target": target}],
             },
-            annotation["target"],
+            session.result(),
         )
-        task_review.validate_decision_semantics(session.result(timeout=0))
 
 
 # ---------------------------------------------------------------------------
@@ -519,97 +516,88 @@ class DecisionTests(ReviewCase):
         session = self.session()
         status, body = post(f"{session.url}api/decision", {"decision": "approve", "annotations": annotations})
         self.assertEqual(204, status, body)
-        result = session.result(timeout=5)
-        self.assertIsNotNone(result)
-        return result
+        return session.result()
 
     def test_approve_carries_every_comment_as_a_line_target(self) -> None:
-        result = self.approve_with([
-            {
-                "text": "add a regression test",
-                "target": {
-                    "scope": "line", "repository": str(self.root), "path": "a.py",
-                    "side": "new", "start_line": 2, "end_line": 2,
-                },
-            }
-        ])
+        annotation = {
+            "text": "add a regression test",
+            "target": {
+                "scope": "line", "repository": str(self.root), "path": "a.py",
+                "side": "new", "start_line": 2, "end_line": 2,
+            },
+        }
+        result = self.approve_with([annotation])
         self.assertEqual("approve", result["decision"])
-        # The client must accept this result without complaint.
-        task_review.validate_decision_semantics(result)
-        self.assertTrue(task_review.is_annotation(result["annotations"][0]))
+        self.assertEqual([annotation], result["annotations"])
 
     def test_a_review_comment_is_a_scope_and_nothing_else(self) -> None:
         result = self.approve_with([{"text": "overall", "target": {"scope": "review", "path": "a.py"}}])
         self.assertEqual({"scope": "review"}, result["annotations"][0]["target"])
 
     def test_a_stale_page_cannot_point_at_a_line_it_never_saw(self) -> None:
-        with self.assertRaises(html_review.DecisionError) as caught:
-            html_review.parse_decision(
-                {
-                    "decision": "approve",
-                    "annotations": [
-                        {
-                            "text": "x",
-                            "target": {
-                                "scope": "line", "repository": str(self.root), "path": "a.py",
-                                "side": "old", "start_line": 2, "end_line": 2,
-                            },
-                        }
-                    ],
-                },
-                self.request,
-                html_review.line_index(html_review.build_payload(self.request)),
-            )
-        self.assertIn("a.py", str(caught.exception))
-
-    def test_a_closed_window_is_a_cancelled_review(self) -> None:
         session = self.session()
-        session.stop()
-        result = session.result(timeout=5)
-        self.assertEqual("cancelled", result["decision"])
-        self.assertEqual([], result["annotations"])
+        status, body = post(
+            f"{session.url}api/decision",
+            {
+                "decision": "approve",
+                "annotations": [
+                    {
+                        "text": "x",
+                        "target": {
+                            "scope": "line", "repository": str(self.root), "path": "a.py",
+                            "side": "old", "start_line": 2, "end_line": 2,
+                        },
+                    }
+                ],
+            },
+        )
+        self.assertEqual(400, status)
+        self.assertIn("a.py", json.loads(body)["error"])
+        self.assertTrue(session.still_open(0.2))
 
-    def page_number(self, session: html_review.ReviewSession) -> int:
+    def page_number(self, session: Review) -> int:
         status, body, _ = get(session.url)
         self.assertEqual(200, status)
         return int(re.search(rb'"page":(\d+)', body).group(1))
 
-    def close_page(self, session: html_review.ReviewSession, page: int) -> int:
+    def close_page(self, session: Review, page: int) -> int:
         status, _ = post(f"{session.url}api/closing?page={page}", b"")
         return status
 
+    # The reviewer's close grace period is a fixed five seconds, so the tests
+    # below wait it out for real.
+    GRACE = 5.0
+
     def test_a_closed_window_cancels_once_the_grace_period_passes(self) -> None:
         session = self.session()
-        session.close_grace_seconds = 0.2
         self.assertEqual(204, self.close_page(session, self.page_number(session)))
-        self.assertEqual("cancelled", session.result(timeout=5)["decision"])
+        result = session.result(timeout=self.GRACE + 10)
+        self.assertEqual("cancelled", result["decision"])
+        self.assertEqual([], result["annotations"])
 
     def test_reloading_the_page_keeps_the_review_alive(self) -> None:
         # Chromium requests the reloaded page before the old page reports that it is closing.
         session = self.session()
-        session.close_grace_seconds = 0.1
         old = self.page_number(session)
         self.page_number(session)
         self.assertEqual(204, self.close_page(session, old))
-        self.assertIsNone(session.result(timeout=0.5), "a reload must not withdraw the review")
+        self.assertTrue(session.still_open(self.GRACE + 0.5), "a reload must not withdraw the review")
         status, _ = post(f"{session.url}api/decision", {"decision": "approve", "annotations": []})
         self.assertEqual(204, status)
-        self.assertEqual("approve", session.result(timeout=5)["decision"])
+        self.assertEqual("approve", session.result()["decision"])
 
     def test_a_closing_report_that_arrives_before_the_reloaded_page_is_requested(self) -> None:
         session = self.session()
-        session.close_grace_seconds = 2.0
         old = self.page_number(session)
         self.assertEqual(204, self.close_page(session, old))
         self.page_number(session)
-        self.assertIsNone(session.result(timeout=3.0), "a reload must not withdraw the review")
+        self.assertTrue(session.still_open(self.GRACE + 0.5), "a reload must not withdraw the review")
         status, _ = post(f"{session.url}api/decision", {"decision": "approve", "annotations": []})
         self.assertEqual(204, status)
-        self.assertEqual("approve", session.result(timeout=5)["decision"])
+        self.assertEqual("approve", session.result()["decision"])
 
     def test_closing_is_behind_the_token_and_needs_post_and_a_page_number(self) -> None:
         session = self.session()
-        session.close_grace_seconds = 0.1
         page = self.page_number(session)
         status, _ = post(f"{session.base_url}/api/closing?page={page}", b"")
         self.assertEqual(404, status)
@@ -619,74 +607,98 @@ class DecisionTests(ReviewCase):
             with self.subTest(query=query):
                 status, _ = post(f"{session.url}api/closing{query}", b"")
                 self.assertEqual(400, status)
-        self.assertIsNone(session.result(timeout=0.5), "none of these requests may withdraw the review")
+        self.assertTrue(session.still_open(self.GRACE + 0.5), "none of these requests may withdraw the review")
 
     def test_an_explicit_cancel_still_ends_the_review_at_once(self) -> None:
         session = self.session()
-        session.close_grace_seconds = 60
+        self.assertEqual(204, self.close_page(session, self.page_number(session)))
+        started = time.monotonic()
         status, _ = post(f"{session.url}api/decision", {"decision": "cancelled", "annotations": []})
         self.assertEqual(204, status)
-        self.assertEqual("cancelled", session.result(timeout=5)["decision"])
-
-    def test_browser_disabled_by_environment(self) -> None:
-        for value, expected in [("", True), ("0", True), ("false", True), ("1", False), ("yes", False)]:
-            with self.subTest(value=value):
-                self.assertEqual(expected, html_review.browser_enabled({html_review.NO_BROWSER_ENV: value}))
-        self.assertTrue(html_review.browser_enabled({}))
+        self.assertEqual("cancelled", session.result()["decision"])
+        self.assertLess(time.monotonic() - started, self.GRACE - 1, "a cancel must not wait for the grace period")
 
 
-class Collector:
-    """Captures the diagnostics a reviewer run writes for a human."""
-
-    def __init__(self) -> None:
-        self.text = ""
-
-    def write(self, text: str) -> None:
-        self.text += text
-
-    def flush(self) -> None:
-        pass
+# ---------------------------------------------------------------------------
+# opening the page
+# ---------------------------------------------------------------------------
 
 
 class ServeAndWaitTests(ReviewCase):
-    def test_opens_the_page_when_a_browser_is_allowed(self) -> None:
-        session = self.session(open_browser=True)
-        session.stop()  # the decision is already in, so serve_and_wait returns at once
-        with mock.patch.object(html_review.webbrowser, "open", return_value=True) as opened:
-            result = session.serve_and_wait(stream=Collector())
-        opened.assert_called_once()
-        self.assertEqual(session.url, opened.call_args.args[0])
-        self.assertEqual("cancelled", result["decision"])
+    def fake_opener(self, exit_code: int = 0) -> tuple[dict[str, str], Path]:
+        """A PATH whose `open` and `xdg-open` only record the URL they were given."""
+        bin_dir = self.base / "bin"
+        bin_dir.mkdir(exist_ok=True)
+        opened = self.base / "opened"
+        for name in ("open", "xdg-open"):
+            script = bin_dir / name
+            script.write_text(f"#!/bin/sh\nprintf '%s\\n' \"$1\" >> '{opened}'\nexit {exit_code}\n", encoding="utf-8")
+            script.chmod(0o755)
+        return {"PATH": f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}"}, opened
 
-    def test_does_not_open_a_page_when_a_browser_is_disabled(self) -> None:
-        session = self.session()
-        session.stop()
-        with mock.patch.object(html_review.webbrowser, "open", return_value=True) as opened:
-            session.serve_and_wait(stream=Collector())
-        opened.assert_not_called()
+    def without_opener(self) -> dict[str, str]:
+        """A PATH that holds git and nothing that could open a browser."""
+        bin_dir = self.base / "git-only"
+        bin_dir.mkdir()
+        (bin_dir / "git").symlink_to(shutil.which("git"))
+        return {"PATH": str(bin_dir)}
+
+    def wait_for(self, path: Path, seconds: float = 10.0) -> str:
+        deadline = time.monotonic() + seconds
+        while time.monotonic() < deadline:
+            if path.exists() and path.read_text(encoding="utf-8").endswith("\n"):
+                return path.read_text(encoding="utf-8")
+            time.sleep(0.05)
+        self.fail(f"{path.name} was never written")
+
+    def cancel(self, session: Review) -> dict:
+        status, _ = post(f"{session.url}api/decision", {"decision": "cancelled", "annotations": []})
+        self.assertEqual(204, status)
+        return session.result()
+
+    def test_opens_the_page_when_a_browser_is_allowed(self) -> None:
+        env, opened = self.fake_opener()
+        session = self.session(browser=True, env=env)
+        self.assertEqual([session.url], self.wait_for(opened).splitlines())
+        self.assertEqual("cancelled", self.cancel(session)["decision"])
+
+    def test_browser_disabled_by_environment(self) -> None:
+        for value, expected in [(None, True), ("", True), ("0", True), ("false", True), ("1", False), ("yes", False)]:
+            with self.subTest(value=value):
+                env, opened = self.fake_opener()
+                opened.unlink(missing_ok=True)
+                if value is not None:
+                    env[commands.NO_BROWSER_ENV] = value
+                session = self.session(browser=True, env=env)
+                if expected:
+                    self.assertEqual([session.url], self.wait_for(opened).splitlines())
+                self.cancel(session)
+                if not expected:
+                    time.sleep(0.2)
+                    self.assertFalse(opened.exists(), "a disabled browser must not be opened")
 
     def test_prints_the_url_so_a_human_can_open_the_page_by_hand(self) -> None:
         session = self.session()
-        session.stop()
-        messages = Collector()
-        session.serve_and_wait(stream=messages)
-        self.assertIn(session.url, messages.text)
+        self.cancel(session)
+        self.assertIn(session.url, session.finish()[2])
 
     def test_publishes_and_then_withdraws_the_url(self) -> None:
-        published = self.base / "page-url"
         session = self.session()
-        session.stop()
-        session.serve_and_wait(stream=Collector(), url_file=str(published))
-        self.assertFalse(published.exists(), "a token that no longer routes must not be left on disk")
+        self.cancel(session)
+        self.assertFalse(session.url_file.exists(), "a token that no longer routes must not be left on disk")
 
     def test_a_browser_that_cannot_open_keeps_the_review_alive(self) -> None:
-        session = self.session(open_browser=True)
-        session.stop()
-        messages = Collector()
-        with mock.patch.object(html_review.webbrowser, "open", side_effect=OSError("no browser here")):
-            result = session.serve_and_wait(stream=messages)
-        self.assertEqual("cancelled", result["decision"])
-        self.assertIn("no browser here", messages.text)
+        session = self.session(browser=True, env=self.without_opener())
+        self.assertTrue(session.still_open(0.5))
+        self.assertEqual("cancelled", self.cancel(session)["decision"])
+        self.assertIn("unable to open a browser", session.finish()[2])
+
+    def test_an_opener_that_fails_keeps_the_review_alive(self) -> None:
+        env, opened = self.fake_opener(exit_code=1)
+        session = self.session(browser=True, env=env)
+        self.wait_for(opened)
+        self.assertTrue(session.still_open(0.5))
+        self.assertEqual("cancelled", self.cancel(session)["decision"])
 
 
 # ---------------------------------------------------------------------------
@@ -699,21 +711,19 @@ class GateIntegrationTests(ReviewCase):
 
     def env(self) -> dict[str, str]:
         dropped = (
-            task_review.LAUNCHER_ENV,
-            task_review.TIMEOUT_ENV,
-            html_review.NO_BROWSER_ENV,
-            html_review.URL_FILE_ENV,
+            commands.LAUNCHER_ENV,
+            commands.TIMEOUT_ENV,
+            commands.NO_BROWSER_ENV,
+            commands.URL_FILE_ENV,
         )
         base = {key: value for key, value in os.environ.items() if key not in dropped}
         base.update(
             {
-                task_review.LAUNCHER_ENV: commands.reviewer_launcher(),
-                task_review.TIMEOUT_ENV: "60",
-                html_review.NO_BROWSER_ENV: "1",
-                html_review.URL_FILE_ENV: str(self.base / "review-url"),
-                "GIT_CONFIG_GLOBAL": os.devnull,
-                "GIT_CONFIG_SYSTEM": os.devnull,
-                "GIT_TERMINAL_PROMPT": "0",
+                commands.LAUNCHER_ENV: commands.reviewer_launcher(),
+                commands.TIMEOUT_ENV: "60",
+                commands.NO_BROWSER_ENV: "1",
+                commands.URL_FILE_ENV: str(self.base / "review-url"),
+                **GIT_ENV,
             }
         )
         return base
@@ -726,14 +736,8 @@ class GateIntegrationTests(ReviewCase):
             text=True,
             env=self.env(),
         )
-        self.addCleanup(self.kill, process)
+        self.addCleanup(stop, process)
         return process
-
-    @staticmethod
-    def kill(process: subprocess.Popen) -> None:
-        if process.poll() is None:
-            process.kill()
-            process.wait(timeout=30)
 
     def review_page(self, process: subprocess.Popen, timeout: float = 30.0) -> str:
         """The URL of the page the reviewer is actually serving."""
@@ -788,18 +792,18 @@ class GateIntegrationTests(ReviewCase):
                 ],
             }
         )
-        self.assertEqual(task_review.EXIT_OK, code)
+        self.assertEqual(commands.EXIT_OK, code)
         self.assertEqual("approve", result["decision"])
         self.assertEqual(1, len(result["annotations"]))
         verified = self.verify()
-        self.assertEqual(task_review.EXIT_OK, verified.returncode, verified.stdout + verified.stderr)
+        self.assertEqual(commands.EXIT_OK, verified.returncode, verified.stdout + verified.stderr)
         self.assertTrue(json.loads(verified.stdout)["approved"])
 
     def test_an_approval_without_comments_makes_the_gate_pass(self) -> None:
         code, result = self.review({"decision": "approve", "annotations": []})
-        self.assertEqual(task_review.EXIT_OK, code)
+        self.assertEqual(commands.EXIT_OK, code)
         self.assertEqual([], result["annotations"])
-        self.assertEqual(task_review.EXIT_OK, self.verify().returncode)
+        self.assertEqual(commands.EXIT_OK, self.verify().returncode)
 
     def test_requested_changes_leaves_the_gate_failing(self) -> None:
         code, result = self.review(
@@ -808,10 +812,10 @@ class GateIntegrationTests(ReviewCase):
                 "annotations": [{"text": "this needs a test", "target": {"scope": "review"}}],
             }
         )
-        self.assertEqual(task_review.EXIT_NOT_APPROVED, code)
+        self.assertEqual(commands.EXIT_NOT_APPROVED, code)
         self.assertEqual("request-changes", result["decision"])
         verified = self.verify()
-        self.assertEqual(task_review.EXIT_NOT_APPROVED, verified.returncode, verified.stdout)
+        self.assertEqual(commands.EXIT_NOT_APPROVED, verified.returncode, verified.stdout)
         self.assertFalse(json.loads(verified.stdout)["approved"])
 
     def test_open_line_comments_come_back_as_feedback(self) -> None:
@@ -835,11 +839,11 @@ class GateIntegrationTests(ReviewCase):
                 ],
             }
         )
-        self.assertEqual(task_review.EXIT_NOT_APPROVED, code)
+        self.assertEqual(commands.EXIT_NOT_APPROVED, code)
         self.assertEqual("request-changes", result["decision"])
         self.assertEqual(1, len(result["annotations"]), "the open comment must reach the agent")
         self.assertEqual(2, result["annotations"][0]["target"]["start_line"])
-        self.assertEqual(task_review.EXIT_NOT_APPROVED, self.verify().returncode)
+        self.assertEqual(commands.EXIT_NOT_APPROVED, self.verify().returncode)
 
     def test_feedback_needs_at_least_one_comment(self) -> None:
         process = self.start_review()
@@ -853,10 +857,10 @@ class GateIntegrationTests(ReviewCase):
 
     def test_a_closed_window_leaves_the_gate_failing(self) -> None:
         code, result = self.review({"decision": "cancelled", "annotations": []})
-        self.assertEqual(task_review.EXIT_NOT_APPROVED, code)
+        self.assertEqual(commands.EXIT_NOT_APPROVED, code)
         self.assertEqual("cancelled", result["decision"])
         self.assertEqual([], result["annotations"])
-        self.assertEqual(task_review.EXIT_NOT_APPROVED, self.verify().returncode)
+        self.assertEqual(commands.EXIT_NOT_APPROVED, self.verify().returncode)
 
     def test_a_change_under_the_reviewer_fails_the_gate_closed(self) -> None:
         # The gate re-fingerprints after an approval: a reviewer that approved a
@@ -871,9 +875,9 @@ class GateIntegrationTests(ReviewCase):
         )
         self.assertEqual(204, status, body)
         code, stdout = self.finish(process)
-        self.assertEqual(task_review.EXIT_ERROR, code, stdout)
+        self.assertEqual(commands.EXIT_ERROR, code, stdout)
         self.assertEqual("", stdout, "a state that moved under the reviewer must print no result")
-        self.assertEqual(task_review.EXIT_NOT_APPROVED, self.verify().returncode)
+        self.assertEqual(commands.EXIT_NOT_APPROVED, self.verify().returncode)
 
     def test_a_refused_decision_leaves_the_review_open(self) -> None:
         process = self.start_review()
@@ -885,7 +889,7 @@ class GateIntegrationTests(ReviewCase):
         status, _ = post(f"{page}api/decision", {"decision": "cancelled", "annotations": []}, timeout=30)
         self.assertEqual(204, status)
         code, stdout = self.finish(process)
-        self.assertEqual(task_review.EXIT_NOT_APPROVED, code)
+        self.assertEqual(commands.EXIT_NOT_APPROVED, code)
         self.assertEqual("cancelled", json.loads(stdout)["decision"])
 
     def test_the_published_url_is_gone_when_the_review_ends(self) -> None:
@@ -935,32 +939,23 @@ class GateIntegrationTests(ReviewCase):
 
     def test_the_reviewer_expires_on_its_own_lifetime(self) -> None:
         environment = self.env()
-        environment[html_review.LIFETIME_ENV] = "1"
-        environment[html_review.IDLE_ENV] = "1"
+        environment[commands.LIFETIME_ENV] = "1"
+        environment[commands.IDLE_ENV] = "1"
         completed = subprocess.run(
-            [*commands.reviewer(), "--review", self.request.to_json()],
+            [*commands.reviewer(), "--review", json.dumps(self.request)],
             capture_output=True,
             text=True,
             env=environment,
             timeout=60,
         )
-        self.assertEqual(html_review.EXIT_OK, completed.returncode, completed.stderr)
+        self.assertEqual(commands.EXIT_OK, completed.returncode, completed.stderr)
         result = json.loads(completed.stdout)
         self.assertEqual("cancelled", result["decision"], "an expired review is never an approval")
         self.assertEqual([], result["annotations"])
 
     def test_junk_lifetime_values_fall_back_to_the_defaults(self) -> None:
-        environment = self.env()
-        environment[html_review.LIFETIME_ENV] = "not a number"
-        environment[html_review.IDLE_ENV] = "-5"
-        self.assertEqual(
-            html_review.LIFETIME_SECONDS,
-            html_review.positive_seconds(environment, html_review.LIFETIME_ENV, html_review.LIFETIME_SECONDS),
-        )
-        self.assertEqual(
-            html_review.IDLE_SECONDS,
-            html_review.positive_seconds(environment, html_review.IDLE_ENV, html_review.IDLE_SECONDS),
-        )
+        session = self.session(env={commands.LIFETIME_ENV: "not a number", commands.IDLE_ENV: "-5"})
+        self.assertTrue(session.still_open(1.5), "junk limits must not end the review early")
 
 
 class DocumentCase(ReviewCase):
@@ -976,25 +971,17 @@ class DocumentCase(ReviewCase):
             encoding="utf-8",
         )
 
-    def document_request(self) -> task_review.DocumentRequest:
-        return task_review.DocumentRequest(
-            version=task_review.PROTOCOL_VERSION,
-            review_id="doc-1",
-            criterion="Fix the parser",
-            path=str(self.doc),
-        )
+    def document_request(self) -> dict:
+        return {
+            "version": commands.PROTOCOL_VERSION,
+            "review_id": "doc-1",
+            "criterion": "Fix the parser",
+            "path": str(self.doc),
+        }
 
-    def document_session(self, request: "task_review.DocumentRequest | None" = None, **kwargs):
+    def document_session(self, request: "dict | None" = None) -> Review:
         """A served document review the test can talk to directly."""
-        kwargs.setdefault("open_browser", False)
-        wanted = self.document_request() if request is None else request
-        # start() matters: close() calls shutdown(), which blocks forever on a
-        # server that never entered serve_forever.
-        session = html_review.ReviewSession(
-            wanted, html_review.build_document_payload(wanted), mode="document", **kwargs
-        ).start()
-        self.addCleanup(session.close)
-        return session
+        return self.session(self.document_request() if request is None else request, flag="--review-doc")
 
 
 class DocumentReviewTests(DocumentCase):
@@ -1004,9 +991,7 @@ class DocumentReviewTests(DocumentCase):
         self.assertEqual(len(source), len(session.payload["rows"]))
         for index, row in enumerate(session.payload["rows"]):
             self.assertEqual(index + 1, row["n"], "row n must be source line n")
-        status, body, _ = get(f"{session.url}api/doc")
-        self.assertEqual(200, status)
-        self.assertEqual(session.payload["review_id"], json.loads(body)["review_id"])
+        self.assertEqual("doc-1", session.payload["review_id"])
 
     def test_inline_markup_is_rendered_and_source_html_is_escaped(self) -> None:
         self.doc.write_text("# T\n\n**bold** and <script>x</script>\n", encoding="utf-8")
@@ -1031,9 +1016,7 @@ class DocumentReviewTests(DocumentCase):
             },
         )
         self.assertEqual(204, status, body)
-        result = session.result(timeout=5)
-        self.assertIsNotNone(result)
-        target = result["annotations"][0]["target"]
+        target = session.result()["annotations"][0]["target"]
         self.assertEqual(5, target["start_line"])
         self.assertNotIn("repository", target, "a document has no repository")
         self.assertNotIn("side", target, "a document has no old side")
@@ -1054,7 +1037,7 @@ class DocumentReviewTests(DocumentCase):
         )
         self.assertEqual(400, status)
         self.assertIn("999", json.loads(body)["error"])
-        self.assertIsNone(session.result(timeout=0.3), "a refused decision must leave the review open")
+        self.assertTrue(session.still_open(0.3), "a refused decision must leave the review open")
 
     def test_a_diff_shaped_comment_is_refused(self) -> None:
         session = self.document_session()
@@ -1083,7 +1066,7 @@ class DocumentReviewTests(DocumentCase):
         session = self.document_session()
         status, _ = post(f"{session.url}api/doc-decision", {"decision": "request-changes", "annotations": []})
         self.assertEqual(400, status)
-        self.assertIsNone(session.result(timeout=0.2))
+        self.assertTrue(session.still_open(0.2))
 
     def test_the_document_routes_are_behind_the_token(self) -> None:
         session = self.document_session()
@@ -1107,26 +1090,17 @@ class DocumentReviewTests(DocumentCase):
 
 
 class DocumentRequestValidationTests(DocumentCase):
-    def run_reviewer(self, *args: str, env: "dict[str, str] | None" = None) -> subprocess.CompletedProcess:
-        return subprocess.run(
-            [*commands.reviewer(), *args],
-            capture_output=True,
-            text=True,
-            env={**os.environ, html_review.NO_BROWSER_ENV: "1", "GIT_CONFIG_GLOBAL": os.devnull, **(env or {})},
-            timeout=60,
-        )
-
     def test_accepts_a_well_formed_document_request(self) -> None:
         # A bounded lifetime, so an unattended run withdraws instead of waiting
         # for a decision nobody is there to make.
         completed = self.run_reviewer(
-            "--review-doc", self.document_request().to_json(), env={html_review.LIFETIME_ENV: "1"}
+            "--review-doc", json.dumps(self.document_request()), env={commands.LIFETIME_ENV: "1"}
         )
-        self.assertEqual(html_review.EXIT_OK, completed.returncode, completed.stderr)
+        self.assertEqual(commands.EXIT_OK, completed.returncode, completed.stderr)
         self.assertEqual("cancelled", json.loads(completed.stdout)["decision"])
 
     def test_rejects_malformed_document_requests(self) -> None:
-        version = task_review.PROTOCOL_VERSION
+        version = commands.PROTOCOL_VERSION
         path = str(self.doc)
         bad_requests = [
             "not json",
@@ -1140,18 +1114,14 @@ class DocumentRequestValidationTests(DocumentCase):
         for request in bad_requests:
             with self.subTest(request=request[:48]):
                 completed = self.run_reviewer("--review-doc", request)
-                self.assertEqual(html_review.EXIT_ERROR, completed.returncode)
+                self.assertEqual(commands.EXIT_ERROR, completed.returncode)
                 self.assertEqual("", completed.stdout)
                 self.assertTrue(completed.stderr.strip(), "a refusal must say why")
 
     def test_neither_flag_is_a_usage_error(self) -> None:
         completed = self.run_reviewer()
-        self.assertEqual(html_review.EXIT_ERROR, completed.returncode)
+        self.assertEqual(commands.EXIT_ERROR, completed.returncode)
         self.assertIn("required", completed.stderr)
-
-
-if __name__ == "__main__":
-    unittest.main()
 
 
 class DocumentBlockRangeTests(DocumentCase):
@@ -1210,7 +1180,7 @@ class DocumentBlockRangeTests(DocumentCase):
                     },
                 )
                 self.assertEqual(204, status, body)
-                target = session.result(timeout=5)["annotations"][0]["target"]
+                target = session.result()["annotations"][0]["target"]
                 self.assertEqual(line, target["start_line"], "the range must survive the round trip")
 
     def test_a_line_no_block_covers_is_still_refused(self) -> None:
@@ -1234,13 +1204,13 @@ class DocumentBlockRangeTests(DocumentCase):
         )
         self.assertEqual(400, status)
         self.assertIn("999", json.loads(body)["error"])
-        self.assertIsNone(session.result(timeout=0.3))
+        self.assertTrue(session.still_open(0.3))
 
 
 class CodeBlockLanguageTests(DocumentCase):
     """The page tokenizes; the server only records which language a fence claims."""
 
-    def fenced(self, body: str, language: str = "python") -> str:
+    def fenced(self, body: str, language: str = "python") -> Review:
         self.doc.write_text(f"# T\n\n```{language}\n{body}\n```\n\nAfter.\n", encoding="utf-8")
         return self.document_session()
 
@@ -1343,9 +1313,9 @@ class PageSurfaceTests(ReviewCase):
                 self.assertNotRegex(script, r"(?:const|let|var)\s+%s\b" % name)
 
     def test_the_page_carries_no_stray_control_characters(self) -> None:
-        # The page is a non-raw Python string, so a backslash written for the
-        # browser (\b, \s, \n inside a regex) is eaten by Python and arrives as a
-        # control character. Four separate bugs came from this; catch them all.
+        # A backslash written for the browser (\b, \s, \n inside a regex) that a
+        # template step unescapes arrives as a control character. Four separate
+        # bugs came from this; catch them all.
         session = self.session()
         status, body, _ = get(session.url)
         self.assertEqual(200, status)
@@ -1362,9 +1332,7 @@ class PageSurfaceTests(ReviewCase):
         # has already happened twice here. Function names are checked above;
         # this covers the same rule for top-level bindings.
         script = self.page_script()
-        import re as _re
-
-        names = _re.findall(r"(?m)^(?:const|let)\s+([A-Za-z_$][\w$]*)", script)
+        names = re.findall(r"(?m)^(?:const|let)\s+([A-Za-z_$][\w$]*)", script)
         duplicates = {name for name in names if names.count(name) > 1}
         self.assertEqual(set(), duplicates, "a top-level binding is declared twice")
 
@@ -1445,3 +1413,7 @@ class DiffRowContentTests(ReviewCase):
         self.assertIn("api/closing", handler)
         self.assertIn("boot.page", handler, "the server needs to know which page is closing")
         self.assertNotIn("cancelled", handler, "a reload fires pagehide; only the server may decide it was a close")
+
+
+if __name__ == "__main__":
+    unittest.main()
