@@ -19,6 +19,9 @@ sys.path.insert(0, str(ROOT / "scripts"))
 
 import task_review  # noqa: E402  (the client lives in scripts/ and is not a package)
 
+sys.path.insert(0, str(ROOT / "tests"))
+import commands  # noqa: E402
+
 CLIENT = ROOT / "scripts/task_review.py"
 
 APPROVE = '{"version":"1","review_id":"__REVIEW_ID__","decision":"approve","annotations":[]}'
@@ -137,7 +140,7 @@ class ReviewCase(unittest.TestCase):
 
     def run_client(self, *args: str, cwd: "Path | None" = None, **env_extra: str) -> subprocess.CompletedProcess[str]:
         return subprocess.run(
-            [sys.executable, str(CLIENT), *args],
+            [*commands.client(), *args],
             capture_output=True,
             text=True,
             env=self.env(**env_extra),
@@ -707,7 +710,7 @@ class PackagingTests(unittest.TestCase):
             self.assertNotIn(banned, source, f"the client must stay dependency-free: {banned}")
 
     def test_client_reports_usage_without_a_subcommand(self) -> None:
-        completed = subprocess.run([sys.executable, str(CLIENT)], capture_output=True, text=True)
+        completed = subprocess.run(commands.client(), capture_output=True, text=True)
         self.assertEqual(task_review.EXIT_ERROR, completed.returncode)
         self.assertEqual("", completed.stdout)
         self.assertIn("usage:", completed.stderr)
@@ -791,7 +794,7 @@ class DocumentCommandTests(unittest.TestCase):
 
     def run_client(self, *args: str, template: str) -> subprocess.CompletedProcess:
         return subprocess.run(
-            [sys.executable, str(CLIENT), *args],
+            [*commands.client(), *args],
             capture_output=True,
             text=True,
             env={
@@ -1106,6 +1109,7 @@ class RecoveryFlowTests(ReviewCase):
         self.assertFalse((self.root / "recovery").exists())
 
     @unittest.skipUnless(os.name == "posix", "native startup cancellation requires POSIX")
+    @unittest.skipIf(commands.BINARY, "patches the Python client's internals")
     def test_cancellation_during_process_recording_reaps_the_reviewer(self):
         self.launcher.write_text("#!/usr/bin/env python3\nimport signal\nsignal.pause()\n")
         bootstrap = (
@@ -1151,7 +1155,7 @@ class RecoveryFlowTests(ReviewCase):
             "with open(os.environ['DECISION_FIFO'], 'rb') as stream: stream.read(1)\n"
         )
         process = subprocess.Popen(
-            [sys.executable, str(CLIENT), "review", "--criterion", "ship it",
+            [*commands.client(), "review", "--criterion", "ship it",
              "--repo", str(self.root), "--recovery-dir", str(self.recovery())],
             stdout=subprocess.PIPE, stderr=subprocess.PIPE,
             env=self.env(DECISION_FIFO=str(fifo)),

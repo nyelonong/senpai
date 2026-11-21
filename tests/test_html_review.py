@@ -22,6 +22,8 @@ import task_review  # noqa: E402
 
 CLIENT = ROOT / "scripts/task_review.py"
 REVIEWER = ROOT / "scripts/html_review.py"
+sys.path.insert(0, str(ROOT / "tests"))
+import commands  # noqa: E402
 REVIEW_ID = "0123456789abcdef0123456789abcdef"
 
 
@@ -263,7 +265,7 @@ class GuidedPayloadTests(ReviewCase):
 class RequestValidationTests(ReviewCase):
     def run_reviewer(self, *args: str, stdin: str = "") -> subprocess.CompletedProcess:
         return subprocess.run(
-            [sys.executable, str(REVIEWER), *args],
+            [*commands.reviewer(), *args],
             input=stdin,
             capture_output=True,
             text=True,
@@ -705,7 +707,7 @@ class GateIntegrationTests(ReviewCase):
         base = {key: value for key, value in os.environ.items() if key not in dropped}
         base.update(
             {
-                task_review.LAUNCHER_ENV: str(REVIEWER),
+                task_review.LAUNCHER_ENV: commands.reviewer_launcher(),
                 task_review.TIMEOUT_ENV: "60",
                 html_review.NO_BROWSER_ENV: "1",
                 html_review.URL_FILE_ENV: str(self.base / "review-url"),
@@ -718,7 +720,7 @@ class GateIntegrationTests(ReviewCase):
 
     def start_review(self) -> subprocess.Popen:
         process = subprocess.Popen(
-            [sys.executable, str(CLIENT), "review", "--criterion", "ship it", "--repo", str(self.root)],
+            [*commands.client(), "review", "--criterion", "ship it", "--repo", str(self.root)],
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
@@ -764,7 +766,7 @@ class GateIntegrationTests(ReviewCase):
 
     def verify(self) -> subprocess.CompletedProcess:
         return subprocess.run(
-            [sys.executable, str(CLIENT), "verify", "--repo", str(self.root)],
+            [*commands.client(), "verify", "--repo", str(self.root)],
             capture_output=True,
             text=True,
             env=self.env(),
@@ -936,7 +938,7 @@ class GateIntegrationTests(ReviewCase):
         environment[html_review.LIFETIME_ENV] = "1"
         environment[html_review.IDLE_ENV] = "1"
         completed = subprocess.run(
-            [sys.executable, str(REVIEWER), "--review", self.request.to_json()],
+            [*commands.reviewer(), "--review", self.request.to_json()],
             capture_output=True,
             text=True,
             env=environment,
@@ -1107,7 +1109,7 @@ class DocumentReviewTests(DocumentCase):
 class DocumentRequestValidationTests(DocumentCase):
     def run_reviewer(self, *args: str, env: "dict[str, str] | None" = None) -> subprocess.CompletedProcess:
         return subprocess.run(
-            [sys.executable, str(REVIEWER), *args],
+            [*commands.reviewer(), *args],
             capture_output=True,
             text=True,
             env={**os.environ, html_review.NO_BROWSER_ENV: "1", "GIT_CONFIG_GLOBAL": os.devnull, **(env or {})},

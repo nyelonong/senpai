@@ -125,7 +125,7 @@ test('keyboard side changes follow visual pairs and cannot select blank sides', 
   assert.equal(moveSelection(lines, {side: 'old', from: 0.5, to: 0.5}, 'ArrowDown'), null);
 });
 
-const pageSource = fs.readFileSync(path.join(__dirname, '../scripts/html_review.py'), 'utf8');
+const pageSource = fs.readFileSync(path.join(__dirname, '../assets/review-page.html'), 'utf8');
 function pageFunction(name) {
   const start = pageSource.indexOf('function ' + name + '(');
   assert.ok(start >= 0, name);
