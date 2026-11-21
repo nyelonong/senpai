@@ -2,6 +2,10 @@
 
 ``SENPAI_BINARY`` overrides the binary; by default the tests run the release
 build, so run ``cargo build --release`` first.
+
+The suite turns the inbox off for every process it starts, so no test touches
+the person's real inbox service; ``test_inbox.py`` opts back in with a private
+``SENPAI_HOME``.
 """
 from __future__ import annotations
 
@@ -32,6 +36,11 @@ NO_BROWSER_ENV = "HTML_REVIEW_NO_BROWSER"
 URL_FILE_ENV = "HTML_REVIEW_URL_FILE"
 LIFETIME_ENV = "HTML_REVIEW_LIFETIME"
 IDLE_ENV = "HTML_REVIEW_IDLE"
+INBOX_ENV = "SENPAI_INBOX"
+HOME_ENV = "SENPAI_HOME"
+SERVE_IDLE_ENV = "SENPAI_SERVE_IDLE"
+
+os.environ[INBOX_ENV] = "0"
 
 
 def client() -> list[str]:

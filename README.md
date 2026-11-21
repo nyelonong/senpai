@@ -204,11 +204,34 @@ git -C "$TARGET" commit -m "Describe the verified change"
 - Known RDG return failure: `io error: Bogus destination port`. Prefer HTML unless your build is verified.
 - Surface choice never relaxes protocol/fingerprint rules. Client/reviewer own timeout/parent-loss handling; runtime owns async waiting/wake-up/cancellation integration.
 
+### Inbox
+
+The built-in HTML reviewer sends every review to one local inbox. The first
+review starts `senpai serve` in the background, and later reviews from any
+agent session join the same page. The service stops itself after 10 minutes
+with nothing waiting.
+
+```sh
+"$SENPAI" inbox                       # open the inbox page; prints {"inbox": URL, "pending": N}
+"$SENPAI" serve --stop                # stop the service; waiting reviews fail with exit 2
+"$SENPAI" ask --question "Which port should the dev server use?" \
+  --option 8080 --option 9090 --context /path/to/repo
+```
+
+- **Same contract.** `review` still blocks and returns the same JSON and exit codes. The client still fingerprints, rechecks and writes the ledger; the service only queues, shows and relays. If it dies or is stopped, the review fails with exit 2 and nothing is approved.
+- **Withdrawal.** A client that ends early (interrupt, timeout, killed) withdraws its item. Closing a review tab does not: the item stays until you decide, within the usual `HTML_REVIEW_LIFETIME` and `HTML_REVIEW_IDLE` page limits.
+- **Attention.** A new item opens the inbox in the browser, or shows a macOS notification when the inbox is already open. `HTML_REVIEW_NO_BROWSER=1` turns both off.
+- **`ask`.** Prints `{"version": "1", "question_id": N, "option": …, "text": …}`. Exit 0 answered, 1 dismissed, 2 error or `TASK_REVIEW_TIMEOUT`. No ledger is written.
+- **One-off page.** `SENPAI_INBOX=0` gives each review its own page and server, as before the inbox.
+- **Files.** `~/Library/Application Support/senpai/` (mode 0700): `senpai.sock`, `serve.lock`, `serve.log`. `SENPAI_HOME` moves them; a Unix socket path must stay under 104 bytes. `SENPAI_SERVE_IDLE` sets the idle exit in seconds.
+- **Updates.** After `cargo install`, an idle service from the old build restarts on the next request. One with items still waiting keeps running, and new requests fail until those items finish or you run `senpai serve --stop`.
+
 ### Privacy and trust
 
 | Boundary | Rule |
 | --- | --- |
 | Browser | `127.0.0.1`, session token, same-origin JS/fonts; **keep the URL private** |
+| Inbox | Private directory and socket; client and service each refuse a peer run by another user; every review and the inbox page have their own random token |
 | Data | Local by default, accessible to unrestricted local processes; custom reviewers must be trusted |
 | Ledger | `task-review-approval.jsonl` in Git metadata; document reviews use their resolved context; contains criteria, paths, comments/decisions |
 | Private files | Never commit ledgers, live URLs, sessions or scanner reports; never delete ledgers as retry cleanup |
@@ -225,7 +248,8 @@ node --test tests/test_diff_view.js
 ```
 
 The Python suite drives the release binary as a black box (`SENPAI_BINARY`
-overrides it). `tests/test_rust_parity.py` also compares it with the last Python
+overrides it). It turns the inbox off for every process it starts, except
+`tests/test_inbox.py`, which runs its own service in a private `SENPAI_HOME`. `tests/test_rust_parity.py` also compares it with the last Python
 client, extracted from git history. Golden cases recorded from that client live
 in `tests/golden/` and are replayed by `cargo test`.
 

@@ -1,0 +1,184 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>senpai inbox</title>
+<style>
+:root{
+  color-scheme:dark;
+  --sans:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+  --mono:ui-monospace,"SF Mono",SFMono-Regular,Menlo,monospace;
+  --bg:#0b0d12; --surface:#12151d; --raised:#181c26;
+  --line:#232936; --fg:#e7ecf4; --muted:#93a0b5; --faint:#6a7a90;
+  --accent:#6ea8fe; --accent-ink:#0b1220; --accent-soft:rgba(110,168,254,.16);
+  --danger:#ff7b72; --ring:rgba(110,168,254,.45);
+}
+@media (prefers-color-scheme: light){
+  :root{
+    color-scheme:light;
+    --bg:#f6f7f9; --surface:#ffffff; --raised:#f0f2f5;
+    --line:#dde1e8; --fg:#1b1f27; --muted:#5b6678; --faint:#8a94a6;
+    --accent:#2f6fde; --accent-ink:#ffffff; --accent-soft:rgba(47,111,222,.12);
+    --danger:#c93c32; --ring:rgba(47,111,222,.35);
+  }
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.5 var(--sans)}
+main{max-width:860px;margin:0 auto;padding:32px 16px 64px}
+h1{font-size:20px;margin:0 0 4px}
+.sub{color:var(--muted);margin:0 0 24px}
+.empty{color:var(--faint);padding:48px 0;text-align:center}
+.item{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:16px 18px;margin:0 0 12px}
+.meta{display:flex;gap:10px;align-items:center;color:var(--muted);font-size:13px;margin:0 0 6px;flex-wrap:wrap}
+.kind{background:var(--accent-soft);color:var(--accent);border-radius:999px;padding:1px 10px;font-weight:600}
+.title{font-size:16px;white-space:pre-wrap;overflow-wrap:anywhere;margin:0 0 6px}
+.places{font:12px/1.5 var(--mono);color:var(--faint);overflow-wrap:anywhere;margin:0 0 10px}
+a.open,button{display:inline-block;border:0;border-radius:8px;padding:7px 14px;font:600 14px var(--sans);cursor:pointer;text-decoration:none}
+a.open,button.primary{background:var(--accent);color:var(--accent-ink)}
+button.choice,button.quiet{background:var(--raised);color:var(--fg);border:1px solid var(--line)}
+button.choice[aria-pressed="true"]{border-color:var(--accent);box-shadow:0 0 0 2px var(--ring)}
+a.open:focus-visible,button:focus-visible,textarea:focus-visible{outline:2px solid var(--ring);outline-offset:2px}
+.choices{display:flex;gap:8px;flex-wrap:wrap;margin:0 0 10px}
+textarea{width:100%;min-height:72px;background:var(--bg);color:var(--fg);border:1px solid var(--line);border-radius:8px;padding:8px 10px;font:14px/1.5 var(--sans);resize:vertical;margin:0 0 10px}
+.actions{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.error{color:var(--danger);font-size:13px}
+.offline{color:var(--danger);margin:0 0 16px}
+</style>
+</head>
+<body>
+<main>
+  <h1>senpai inbox</h1>
+  <p class="sub">Reviews and questions from your coding agents. They wait here until you decide.</p>
+  <p class="offline" id="offline" hidden>The senpai service is not running. Items will return when an agent asks again.</p>
+  <div id="items"></div>
+  <p class="empty" id="empty">Nothing is waiting for you.</p>
+</main>
+<script>
+"use strict";
+const BOOT = __INBOX_BOOT__;
+const list = document.getElementById("items");
+const empty = document.getElementById("empty");
+const offline = document.getElementById("offline");
+const shown = new Map();
+
+function age(seconds) {
+  if (seconds < 60) return "just now";
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return minutes + " min ago";
+  const hours = Math.floor(minutes / 60);
+  return hours + " h " + (minutes % 60) + " min ago";
+}
+
+function el(tag, className, text) {
+  const node = document.createElement(tag);
+  if (className) node.className = className;
+  if (text !== undefined) node.textContent = text;
+  return node;
+}
+
+function kindLabel(kind) {
+  return {diff: "diff review", document: "document review", question: "question"}[kind] || kind;
+}
+
+function questionForm(item, card) {
+  let chosen = null;
+  const error = el("span", "error");
+  if (item.options.length) {
+    const choices = el("div", "choices");
+    for (const option of item.options) {
+      const button = el("button", "choice", option);
+      button.type = "button";
+      button.setAttribute("aria-pressed", "false");
+      button.addEventListener("click", () => {
+        chosen = chosen === option ? null : option;
+        for (const other of choices.children) other.setAttribute("aria-pressed", String(other === button && chosen !== null));
+      });
+      choices.append(button);
+    }
+    card.append(choices);
+  }
+  const text = el("textarea");
+  text.placeholder = item.options.length ? "Add a note (optional)" : "Your answer";
+  text.setAttribute("aria-label", "Answer");
+  const send = el("button", "primary", "Send answer");
+  send.type = "button";
+  const dismiss = el("button", "quiet", "Dismiss");
+  dismiss.type = "button";
+  async function post(body) {
+    error.textContent = "";
+    send.disabled = dismiss.disabled = true;
+    try {
+      const response = await fetch(BOOT.answerUrl, {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(body)});
+      if (!response.ok) {
+        const detail = await response.json().catch(() => ({}));
+        throw new Error(detail.error || "the answer was not accepted");
+      }
+      card.remove();
+      shown.delete(item.id);
+      refreshEmpty();
+    } catch (failure) {
+      error.textContent = failure.message;
+      send.disabled = dismiss.disabled = false;
+    }
+  }
+  send.addEventListener("click", () => post({id: item.id, option: chosen, text: text.value}));
+  dismiss.addEventListener("click", () => post({id: item.id, dismissed: true}));
+  const actions = el("div", "actions");
+  actions.append(send, dismiss, error);
+  card.append(text, actions);
+}
+
+function card(item) {
+  const node = el("section", "item");
+  node.id = "item-" + item.id;
+  const meta = el("div", "meta");
+  const ageNode = el("span", "", age(item.age));
+  meta.append(el("span", "kind", kindLabel(item.kind)), ageNode);
+  node.append(meta, el("p", "title", item.title || "(no description)"));
+  if (item.places.length) node.append(el("p", "places", item.places.join("\n")));
+  if (item.kind === "question") {
+    questionForm(item, node);
+  } else {
+    const open = el("a", "open", "Open review");
+    open.href = item.url;
+    open.target = "_blank";
+    open.rel = "noopener";
+    node.append(open);
+  }
+  return {node, ageNode};
+}
+
+function refreshEmpty() {
+  empty.hidden = shown.size > 0;
+  document.title = shown.size ? "(" + shown.size + ") senpai inbox" : "senpai inbox";
+}
+
+async function poll() {
+  try {
+    const response = await fetch(BOOT.itemsUrl, {cache: "no-store"});
+    if (!response.ok) throw new Error(String(response.status));
+    const {items} = await response.json();
+    offline.hidden = true;
+    const live = new Set(items.map(item => item.id));
+    for (const [id, entry] of shown) {
+      if (!live.has(id)) { entry.node.remove(); shown.delete(id); }
+    }
+    for (const item of items) {
+      const entry = shown.get(item.id);
+      if (entry) { entry.ageNode.textContent = age(item.age); continue; }
+      const created = card(item);
+      shown.set(item.id, created);
+      list.append(created.node);
+    }
+  } catch (failure) {
+    offline.hidden = false;
+  }
+  refreshEmpty();
+}
+
+poll();
+setInterval(poll, 2000);
+</script>
+</body>
+</html>

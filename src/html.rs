@@ -634,6 +634,17 @@ fn parse_decision(payload: &Value, review_id: &PyStr, document: Option<&PyStr>, 
 // the page and the server
 // ---------------------------------------------------------------------------
 
+/// One review, built and checked by the reviewer process, ready to be shown
+/// either on its own page or in the inbox.
+pub(crate) struct Prepared {
+    pub(crate) title: PyStr,
+    pub(crate) places: Vec<PyStr>,
+    pub(crate) review_id: PyStr,
+    pub(crate) document: Option<PyStr>,
+    pub(crate) payload: Value,
+    pub(crate) mode: &'static str,
+}
+
 pub fn render_page(token: &str, mode: &str, page: u64) -> Vec<u8> {
     let diff = mode == "diff";
     let boot = Object::new()
@@ -655,7 +666,7 @@ struct State {
     closing: Option<u64>,
 }
 
-struct Session {
+pub(crate) struct Session {
     review_id: PyStr,
     document: Option<PyStr>,
     payload_json: Vec<u8>,
@@ -667,12 +678,63 @@ struct Session {
     requests: AtomicU64,
     close_generation: AtomicU64,
     stopped: AtomicBool,
-    close_grace: Duration,
+    close_grace: Option<Duration>,
 }
 
 impl Session {
+    /// A session for one prepared payload. Without a close grace, closing the
+    /// page never withdraws the review: the inbox keeps it until a decision.
+    pub(crate) fn new(prepared: &Prepared, token: String, close_grace: Option<Duration>) -> Self {
+        let index = match prepared.mode {
+            "document" => document_line_index(&prepared.payload),
+            _ => line_index(&prepared.payload),
+        };
+        Session {
+            review_id: prepared.review_id.clone(),
+            document: prepared.document.clone(),
+            payload_json: json::dumps(&prepared.payload, json::COMPACT).into_bytes(),
+            index,
+            token,
+            mode: prepared.mode,
+            state: Mutex::new(State { result: None, page: 0, closing: None }),
+            decided: Condvar::new(),
+            requests: AtomicU64::new(0),
+            close_generation: AtomicU64::new(0),
+            stopped: AtomicBool::new(false),
+            close_grace,
+        }
+    }
+
+    pub(crate) fn token(&self) -> &str {
+        &self.token
+    }
+
+    /// A decision, cancellation or withdrawal has ended this review.
+    pub(crate) fn settled(&self) -> bool {
+        self.stopped.load(Ordering::SeqCst)
+    }
+
+    /// The page has been requested at least once.
+    pub(crate) fn opened(&self) -> bool {
+        self.requests.load(Ordering::SeqCst) > 0
+    }
+
     fn cancelled(&self) -> ReviewResult {
         ReviewResult { decision: "cancelled".into(), annotations: Vec::new(), review_id: self.review_id.clone() }
+    }
+
+    /// Records the person's decision unless the review already ended. The
+    /// reply goes out while the state is locked, so a withdrawal cannot land
+    /// between it and the record, and the reply precedes the process exit.
+    fn decide(&self, result: ReviewResult, reply: impl FnOnce(bool)) {
+        let mut state = self.state.lock().expect("session state");
+        let open = state.result.is_none();
+        reply(open);
+        if open {
+            state.result = Some(result);
+            self.stopped.store(true, Ordering::SeqCst);
+            self.decided.notify_all();
+        }
     }
 
     fn submit(&self, result: ReviewResult) {
@@ -684,7 +746,7 @@ impl Session {
         self.decided.notify_all();
     }
 
-    fn stop(&self) {
+    pub(crate) fn stop(&self) {
         self.submit(self.cancelled());
     }
 
@@ -699,6 +761,9 @@ impl Session {
     /// A page is closing: withdraw the review unless a newer page exists or is
     /// requested within the grace period.
     fn begin_close(self: &Arc<Self>, page: u64) {
+        let Some(grace) = self.close_grace else {
+            return;
+        };
         let mut state = self.state.lock().expect("session state");
         if state.result.is_some() || state.closing.is_some() || page != state.page {
             return;
@@ -707,7 +772,7 @@ impl Session {
         state.closing = Some(generation);
         let session = Arc::clone(self);
         thread::spawn(move || {
-            thread::sleep(session.close_grace);
+            thread::sleep(grace);
             let still_closing = session.state.lock().map(|s| s.closing == Some(generation)).unwrap_or(false);
             if still_closing {
                 session.stop();
@@ -715,7 +780,7 @@ impl Session {
         });
     }
 
-    fn wait(&self) -> ReviewResult {
+    pub(crate) fn wait(&self) -> ReviewResult {
         let mut state = self.state.lock().expect("session state");
         while state.result.is_none() {
             state = self.decided.wait(state).expect("session state");
@@ -724,14 +789,14 @@ impl Session {
     }
 }
 
-fn constant_time_eq(a: &str, b: &str) -> bool {
+pub(crate) fn constant_time_eq(a: &str, b: &str) -> bool {
     if !a.is_ascii() || !b.is_ascii() || a.len() != b.len() {
         return false;
     }
     a.bytes().zip(b.bytes()).fold(0u8, |acc, (x, y)| acc | (x ^ y)) == 0
 }
 
-fn respond(request: tiny_http::Request, status: u16, body: Vec<u8>, content_type: &str) {
+pub(crate) fn respond(request: tiny_http::Request, status: u16, body: Vec<u8>, content_type: &str) {
     let mut headers = vec![
         ("Content-Security-Policy", CONTENT_SECURITY_POLICY),
         ("X-Content-Type-Options", "nosniff"),
@@ -751,14 +816,14 @@ fn respond(request: tiny_http::Request, status: u16, body: Vec<u8>, content_type
     let _ = request.respond(response);
 }
 
-fn fail(request: tiny_http::Request, status: u16, message: &str) {
+pub(crate) fn fail(request: tiny_http::Request, status: u16, message: &str) {
     let body = json::dumps(&Value::Object(Object::new().with("error", message)), json::DEFAULT);
     respond(request, status, body.into_bytes(), "application/json; charset=utf-8");
 }
 
 /// The path and query of a request target, as `urllib.parse.urlsplit` reads it,
 /// so an absolute-form target such as `http://host/<token>/` routes the same.
-fn split_target(target: &str) -> (String, String) {
+pub(crate) fn split_target(target: &str) -> (String, String) {
     let mut rest = target;
     if let Some(colon) = rest.find(':') {
         let scheme = &rest[..colon];
@@ -823,7 +888,7 @@ fn route(session: &Session, path: &str) -> Option<String> {
     })
 }
 
-fn handle(session: &Arc<Session>, mut request: tiny_http::Request) {
+pub(crate) fn handle(session: &Arc<Session>, mut request: tiny_http::Request) {
     let (path, query) = split_target(request.url());
     let route = route(session, &path);
     let last = path.rsplit('/').next().unwrap_or("").to_string();
@@ -890,10 +955,13 @@ fn handle(session: &Arc<Session>, mut request: tiny_http::Request) {
                     _ => Err(DecisionError("malformed annotation".into())),
                 };
                 match parsed {
-                    Ok(result) => {
-                        respond(request, 204, Vec::new(), "");
-                        session.submit(result);
-                    }
+                    Ok(result) => session.decide(result, |open| {
+                        if open {
+                            respond(request, 204, Vec::new(), "");
+                        } else {
+                            fail(request, 409, "this review is no longer waiting for a decision");
+                        }
+                    }),
                     Err(DecisionError(message)) => fail(request, 400, &message),
                 }
             }
@@ -903,7 +971,7 @@ fn handle(session: &Arc<Session>, mut request: tiny_http::Request) {
     }
 }
 
-fn publish_url(path: Option<&[u8]>, url: &str) {
+pub(crate) fn publish_url(path: Option<&[u8]>, url: &str) {
     let Some(path) = path.filter(|p| !p.is_empty()) else {
         return;
     };
@@ -924,13 +992,13 @@ fn publish_url(path: Option<&[u8]>, url: &str) {
     }
 }
 
-fn withdraw_url(path: Option<&[u8]>) {
+pub(crate) fn withdraw_url(path: Option<&[u8]>) {
     if let Some(path) = path.filter(|p| !p.is_empty()) {
         let _ = std::fs::remove_file(os::os_path(path));
     }
 }
 
-fn open_browser(url: &str) {
+pub(crate) fn open_browser(url: &str) {
     let opener = if cfg!(target_os = "macos") { "open" } else { "xdg-open" };
     let spawned = std::process::Command::new(opener)
         .arg(url)
@@ -946,7 +1014,7 @@ fn open_browser(url: &str) {
     }
 }
 
-fn env_flag_enabled(name: &str) -> bool {
+pub(crate) fn env_flag_enabled(name: &str) -> bool {
     let value = std::env::var(name).unwrap_or_default();
     matches!(py_strip(&value).to_lowercase().as_str(), "" | "0" | "false" | "no" | "off")
 }
@@ -1084,42 +1152,45 @@ pub fn main(argv: &[PyStr]) -> i32 {
     let lifetime = positive_seconds(LIFETIME_ENV, LIFETIME_SECONDS);
     let idle = positive_seconds(IDLE_ENV, IDLE_SECONDS);
     let browser = env_flag_enabled(NO_BROWSER_ENV);
-    let prepared = (|| -> Result<Session> {
-        let token = os::token_urlsafe(24);
-        let session = |review_id, document, payload: Value, mode, index| Session {
-            review_id,
-            document,
-            payload_json: json::dumps(&payload, json::COMPACT).into_bytes(),
-            index,
-            token: token.clone(),
-            mode,
-            state: Mutex::new(State { result: None, page: 0, closing: None }),
-            decided: Condvar::new(),
-            requests: AtomicU64::new(0),
-            close_generation: AtomicU64::new(0),
-            stopped: AtomicBool::new(false),
-            close_grace: Duration::from_secs_f64(CLOSE_GRACE_SECONDS),
-        };
+    let prepared = (|| -> Result<Prepared> {
         if let Some(text) = &review_doc {
             let request = parse_document_request(&read_request_text(text))?;
             let payload = build_document_payload(&request)?;
-            let index = document_line_index(&payload);
-            Ok(session(request.review_id.clone(), Some(request.path.clone()), payload, "document", index))
+            Ok(Prepared {
+                title: request.criterion.clone(),
+                places: vec![request.path.clone()],
+                review_id: request.review_id.clone(),
+                document: Some(request.path.clone()),
+                payload,
+                mode: "document",
+            })
         } else {
             let request = parse_request(&read_request_text(review.as_ref().expect("one request")))?;
             let payload = build_payload(&SystemGit, &request)?;
-            let index = line_index(&payload);
-            Ok(session(request.review_id.clone(), None, payload, "diff", index))
+            Ok(Prepared {
+                title: request.criterion.clone(),
+                places: request.repositories.iter().map(|r| r.root.clone()).collect(),
+                review_id: request.review_id.clone(),
+                document: None,
+                payload,
+                mode: "diff",
+            })
         }
     })();
-    let session = match prepared {
-        Ok(session) => Arc::new(session),
+    let prepared = match prepared {
+        Ok(prepared) => prepared,
         Err(error) => {
             crate::diag::write(&format!("{PRODUCER}: {}\n", error.message()));
             return crate::EXIT_ERROR;
         }
     };
-    match serve_and_wait(session, lifetime, idle, browser) {
+    let outcome = if crate::inbox::enabled() {
+        crate::inbox::submit_review(&prepared, browser, lifetime, idle)
+    } else {
+        let session = Session::new(&prepared, os::token_urlsafe(24), duration(CLOSE_GRACE_SECONDS));
+        serve_and_wait(Arc::new(session), lifetime, idle, browser)
+    };
+    match outcome {
         Ok(result) => {
             let mut stdout = std::io::stdout().lock();
             let _ = writeln!(stdout, "{}", json::dumps(&result.to_value(), json::COMPACT));

@@ -10,6 +10,7 @@ mod diag;
 mod error;
 mod git;
 mod html;
+mod inbox;
 mod json;
 mod ledger;
 mod markdown;
@@ -37,8 +38,15 @@ pub const EXIT_ERROR: i32 = 2;
 
 fn main() -> ExitCode {
     let argv: Vec<PyStr> = std::env::args_os().skip(1).map(|a| PyStr::from_os(&a)).collect();
-    if argv.first().is_some_and(|a| a == "html-review") {
-        return ExitCode::from(html::main(&argv[1..]) as u8);
+    let service_command: Option<fn(&[PyStr]) -> i32> = match argv.first().map(PyStr::display).as_deref() {
+        Some("html-review") => Some(html::main),
+        Some("serve") => Some(inbox::serve_main),
+        Some("inbox") => Some(inbox::inbox_main),
+        Some("ask") => Some(inbox::ask_main),
+        _ => None,
+    };
+    if let Some(command) = service_command {
+        return ExitCode::from(command(&argv[1..]) as u8);
     }
     let args = match cli::parse(&argv) {
         Parsed::Run(args) => args,
