@@ -21,6 +21,7 @@ mod request;
 mod result;
 mod reviewer;
 mod snapshot;
+mod tui;
 
 use std::process::ExitCode;
 
@@ -43,6 +44,7 @@ fn main() -> ExitCode {
         Some("serve") => Some(inbox::serve_main),
         Some("inbox") => Some(inbox::inbox_main),
         Some("ask") => Some(inbox::ask_main),
+        Some("tui") => Some(tui::main),
         _ => None,
     };
     if let Some(command) = service_command {

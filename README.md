@@ -220,11 +220,23 @@ with nothing waiting.
 
 - **Same contract.** `review` still blocks and returns the same JSON and exit codes. The client still fingerprints, rechecks and writes the ledger; the service only queues, shows and relays. If it dies or is stopped, the review fails with exit 2 and nothing is approved.
 - **Withdrawal.** A client that ends early (interrupt, timeout, killed) withdraws its item. Closing a review tab does not: the item stays until you decide, within the usual `HTML_REVIEW_LIFETIME` and `HTML_REVIEW_IDLE` page limits.
-- **Attention.** A new item opens the inbox in the browser, or shows a macOS notification when the inbox is already open. `HTML_REVIEW_NO_BROWSER=1` turns both off.
+- **Attention.** A new item opens the inbox in the browser, or shows a macOS notification when the inbox is already open. `HTML_REVIEW_NO_BROWSER=1` turns both off. Inside Rex it opens in a split instead (see below).
 - **`ask`.** Prints `{"version": "1", "question_id": N, "option": …, "text": …}`. Exit 0 answered, 1 dismissed, 2 error or `TASK_REVIEW_TIMEOUT`. No ledger is written.
 - **One-off page.** `SENPAI_INBOX=0` gives each review its own page and server, as before the inbox.
 - **Files.** `~/Library/Application Support/senpai/` (mode 0700): `senpai.sock`, `serve.lock`, `serve.log`. `SENPAI_HOME` moves them; a Unix socket path must stay under 104 bytes. `SENPAI_SERVE_IDLE` sets the idle exit in seconds.
 - **Updates.** After `cargo install`, an idle service from the old build restarts on the next request. One with items still waiting keeps running, and new requests fail until those items finish or you run `senpai serve --stop`.
+
+### Terminal and Rex
+
+`senpai tui` shows the inbox in a terminal and works with keys or the mouse:
+click a line or drag across lines to select them, click **Comment**, then
+**Approve**, **Request changes** or **Return to planning**. Every decision asks
+for confirmation first. `senpai tui --item ID` opens one item and exits once it
+is decided, here or in the browser. Press `?` for all keys.
+
+- **Inside Rex.** When an agent runs in a Rex pane (`REX_SESSION` and `REX_BLOCK` are set), each new review or question opens `senpai tui --item ID` in a split beside that pane instead of a browser tab. The split closes after the decision. If the split fails, the item still waits in the inbox and the browser opens instead.
+- **`SENPAI_SURFACE`** chooses where new items appear: `auto` (default), `browser`, `rex` or `none`.
+- **Same checks.** The terminal sends decisions to the service, which checks them exactly like the page's. Document reviews show the markdown source lines, so comments land on the same lines. The Guided tab and syntax colors stay in the browser.
 
 ### Privacy and trust
 
@@ -249,7 +261,8 @@ node --test tests/test_diff_view.js
 
 The Python suite drives the release binary as a black box (`SENPAI_BINARY`
 overrides it). It turns the inbox off for every process it starts, except
-`tests/test_inbox.py`, which runs its own service in a private `SENPAI_HOME`. `tests/test_rust_parity.py` also compares it with the last Python
+`tests/test_inbox.py`, which runs its own service in a private `SENPAI_HOME`,
+and hides any Rex session it runs in; the Rex split is tested with a fake `rex`. `tests/test_rust_parity.py` also compares it with the last Python
 client, extracted from git history. Golden cases recorded from that client live
 in `tests/golden/` and are replayed by `cargo test`.
 

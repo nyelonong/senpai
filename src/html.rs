@@ -709,9 +709,34 @@ impl Session {
         &self.token
     }
 
+    /// The review data the page renders, as JSON.
+    pub(crate) fn payload_json(&self) -> &[u8] {
+        &self.payload_json
+    }
+
+    /// A decision from another surface than the page, checked exactly as the
+    /// page's decisions are.
+    pub(crate) fn decide_value(&self, decision: &Value) -> std::result::Result<(), String> {
+        let document = if self.mode == "document" { self.document.as_ref() } else { None };
+        let result = parse_decision(decision, &self.review_id, document, &self.index).map_err(|e| e.0)?;
+        let mut accepted = false;
+        self.decide(result, |open| accepted = open);
+        if accepted {
+            Ok(())
+        } else {
+            Err("this review is no longer waiting for a decision".into())
+        }
+    }
+
     /// A decision, cancellation or withdrawal has ended this review.
     pub(crate) fn settled(&self) -> bool {
         self.stopped.load(Ordering::SeqCst)
+    }
+
+    /// Counts a view from another surface, such as the terminal, as opening
+    /// the page, so the idle limit does not cancel a review being read there.
+    pub(crate) fn mark_opened(&self) {
+        self.requests.fetch_add(1, Ordering::SeqCst);
     }
 
     /// The page has been requested at least once.

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from pathlib import Path
 import shutil
 import signal
@@ -55,7 +56,7 @@ def wait_for(condition, timeout: float = 10.0, message: str = "condition"):
     raise AssertionError(f"timed out waiting for {message}")
 
 
-class InboxTest(unittest.TestCase):
+class InboxCase(unittest.TestCase):
     def setUp(self) -> None:
         self.temp = Path(os.path.realpath(tempfile.mkdtemp(prefix="sp")))
         self.addCleanup(shutil.rmtree, self.temp, ignore_errors=True)
@@ -125,6 +126,15 @@ class InboxTest(unittest.TestCase):
         return subprocess.run([commands.BINARY, "verify", "--repo", str(root)], env=self.env,
                               capture_output=True, timeout=30).returncode
 
+    def ask(self, *args: str) -> tuple[subprocess.Popen, str, dict]:
+        process = self.start(["ask", *args])
+        inbox = wait_for(lambda: (self.home / "senpai.sock").exists() and self.inbox()["inbox"],
+                         message="the service")
+        item = wait_for(lambda: self.items(inbox) and self.items(inbox)[0], message="the question")
+        return process, inbox, item
+
+
+class InboxTest(InboxCase):
     # -- reviews -----------------------------------------------------------
 
     def test_review_is_decided_through_the_inbox(self) -> None:
@@ -340,13 +350,6 @@ class InboxTest(unittest.TestCase):
 
     # -- questions ---------------------------------------------------------
 
-    def ask(self, *args: str) -> tuple[subprocess.Popen, str, dict]:
-        process = self.start(["ask", *args])
-        inbox = wait_for(lambda: (self.home / "senpai.sock").exists() and self.inbox()["inbox"],
-                         message="the service")
-        item = wait_for(lambda: self.items(inbox) and self.items(inbox)[0], message="the question")
-        return process, inbox, item
-
     def test_question_answered_with_an_option(self) -> None:
         process, inbox, item = self.ask("--question", "Which port?", "--option", "8080", "--option", "9090",
                                         "--context", "/srv/app")
@@ -392,6 +395,140 @@ class InboxTest(unittest.TestCase):
             self.assertEqual(result.returncode, commands.EXIT_ERROR, args)
             self.assertIn("usage: senpai ask", result.stderr.decode())
         self.assertFalse(self.home.exists(), "usage errors start no service")
+
+
+def build_id(binary: str = commands.BINARY) -> str:
+    version = re.search(r'^version = "([^"]+)"', (ROOT / "Cargo.toml").read_text(), re.M).group(1)
+    stamp = os.stat(binary).st_mtime_ns
+    return f"{version}+{stamp // 1_000_000_000}.{stamp % 1_000_000_000:09d}"
+
+
+class TerminalSurfaceTest(InboxCase):
+    """The socket requests behind `senpai tui`, and opening it in Rex."""
+
+    def call(self, **message) -> dict:
+        with socket.socket(socket.AF_UNIX) as connection:
+            connection.connect(str(self.home / "senpai.sock"))
+            connection.sendall(json.dumps({**message, "build": build_id()}).encode() + b"\n")
+            return json.loads(connection.makefile().readline())
+
+    def test_review_decided_over_the_socket(self) -> None:
+        root = self.repo("one")
+        process, _ = self.review(root)
+        [item] = self.call(op="items")["items"]
+        payload = self.call(op="payload", id=item["id"])
+        self.assertEqual((payload["kind"], payload["title"]), ("diff", "ship it"))
+        key = payload["key"]
+        wrong = self.call(op="decide", id=item["id"], key="not-the-key",
+                          decision={"decision": "approve", "annotations": []})
+        self.assertIn("no longer waiting", wrong["error"])
+        self.assertEqual(payload["payload"]["repositories"][0]["files"][0]["path"], "notes.txt")
+        refused = self.call(op="decide", id=item["id"], key=key, decision={"decision": "request-changes", "annotations": []})
+        self.assertIn("comment", refused["error"])
+        bad_line = {"text": "x", "target": {"scope": "line", "repository": str(root), "path": "notes.txt",
+                                            "side": "new", "start_line": 99, "end_line": 99}}
+        refused = self.call(op="decide", id=item["id"], key=key, decision={"decision": "approve", "annotations": [bad_line]})
+        self.assertIn("is not a line", refused["error"])
+        self.assertIsNone(process.poll())
+        good_line = {**bad_line, "target": {**bad_line["target"], "start_line": 2, "end_line": 2}}
+        self.assertEqual(self.call(op="decide", id=item["id"], key=key,
+                                   decision={"decision": "approve", "annotations": [good_line]}), {"decided": True})
+        code, result, err = self.finish(process)
+        self.assertEqual(code, commands.EXIT_OK, err)
+        self.assertEqual(result["annotations"][0]["target"]["start_line"], 2)
+        self.assertEqual(self.verify(root), commands.EXIT_OK)
+        self.assertIn("no longer waiting", self.call(op="decide", id=item["id"], key=key,
+                                                     decision={"decision": "approve", "annotations": []})["error"])
+
+    def test_terminal_view_counts_as_opening_the_page(self) -> None:
+        self.env[commands.TIMEOUT_ENV] = "0"
+        self.env[commands.IDLE_ENV] = "2"
+        process, _ = self.review(self.repo("one"))
+        [item] = self.call(op="items")["items"]
+        key = self.call(op="payload", id=item["id"])["key"]
+        time.sleep(3)
+        self.assertIsNone(process.poll(), "the idle limit must not cancel a review open in the terminal")
+        self.call(op="decide", id=item["id"], key=key, decision={"decision": "approve", "annotations": []})
+        self.assertEqual(self.finish(process)[0], commands.EXIT_OK)
+
+    def test_withdrawn_review_cannot_be_decided(self) -> None:
+        process, _ = self.review(self.repo("one"))
+        [item] = self.call(op="items")["items"]
+        key = self.call(op="payload", id=item["id"])["key"]
+        process.kill()
+        process.communicate()
+        wait_for(lambda: self.call(op="items")["items"] == [], message="withdrawal")
+        reply = self.call(op="decide", id=item["id"], key=key, decision={"decision": "approve", "annotations": []})
+        self.assertIn("no longer waiting", reply["error"])
+
+    def test_question_answered_over_the_socket(self) -> None:
+        process, _, item = self.ask("--question", "Which port?", "--option", "8080")
+        payload = self.call(op="payload", id=item["id"])
+        key = payload.pop("key")
+        self.assertEqual(payload, {"kind": "question", "title": "Which port?", "options": ["8080"]})
+        self.assertIn("not one of", self.call(op="decide", id=item["id"], key=key, decision={"option": "1"})["error"])
+        self.assertEqual(self.call(op="decide", id=item["id"], key=key, decision={"option": "8080", "text": ""}), {"decided": True})
+        code, result, _ = self.finish(process)
+        self.assertEqual((code, result["option"]), (commands.EXIT_OK, "8080"))
+
+    def fake_rex(self, exit_code: int = 0) -> Path:
+        bin_dir = self.temp / "bin"
+        bin_dir.mkdir(exist_ok=True)
+        record = self.temp / "rex-calls"
+        rex = bin_dir / "rex"
+        rex.write_text(f"#!/bin/sh\nprintf '%s\\n' \"$@\" >> {record}\necho --- >> {record}\nexit {exit_code}\n")
+        rex.chmod(0o755)
+        self.env["PATH"] = f"{bin_dir}{os.pathsep}{self.env['PATH']}"
+        self.env.update({"REX_SESSION": "session:test", "REX_BLOCK": "block:agent"})
+        return record
+
+    def rex_calls(self, record: Path) -> list[list[str]]:
+        if not record.exists():
+            return []
+        return [call.strip("\n").split("\n") for call in record.read_text().split("---\n") if call.strip()]
+
+    def test_review_opens_beside_the_agent_in_rex(self) -> None:
+        record = self.fake_rex()
+        process, _ = self.review(self.repo("one"))
+        [item] = self.items(self.inbox()["inbox"])
+        [call] = wait_for(lambda: self.rex_calls(record), message="the rex split")
+        self.assertEqual(call[:11], ["split", "-s", "session:test", "-b", "block:agent", "--split=right",
+                                     "--focus=false", "--label", "senpai", "--shell=none", "--"])
+        self.assertEqual(call[11:13], ["/usr/bin/env", f"{commands.HOME_ENV}={self.home}"])
+        self.assertEqual(call[14:], ["tui", "--item", str(item["id"])])
+        process.kill()
+
+    def test_failed_split_leaves_the_review_waiting(self) -> None:
+        record = self.fake_rex(exit_code=3)
+        url_file = self.temp / "one.url"
+        process = self.start(["review", "--criterion", "ship it", "--repo", str(self.repo("one"))], url_file)
+        wait_for(lambda: self.rex_calls(record), message="the rex split")
+        time.sleep(0.5)
+        self.assertIsNone(process.poll())
+        self.assertEqual(len(self.items(self.inbox()["inbox"])), 1)
+        process.kill()
+        _, err = process.communicate()
+        self.assertIn("unable to open the review in Rex", err.decode())
+
+    def test_question_opens_in_rex_and_surface_none_does_not(self) -> None:
+        record = self.fake_rex()
+        process, _, item = self.ask("--question", "Ready?")
+        [call] = wait_for(lambda: self.rex_calls(record), message="the rex split")
+        self.assertEqual(call[-3:], ["tui", "--item", str(item["id"])])
+        process.kill()
+        process.communicate()
+        self.env[commands.SURFACE_ENV] = "none"
+        process, _, _ = self.ask("--question", "Quiet?")
+        time.sleep(0.5)
+        self.assertEqual(len(self.rex_calls(record)), 1)
+        process.kill()
+
+    def test_tui_needs_a_terminal(self) -> None:
+        result = subprocess.run([commands.BINARY, "tui"], env=self.env, capture_output=True, stdin=subprocess.DEVNULL,
+                                timeout=10)
+        self.assertEqual(result.returncode, commands.EXIT_ERROR)
+        bad = subprocess.run([commands.BINARY, "tui", "--item", "x"], env=self.env, capture_output=True, timeout=10)
+        self.assertIn("--item needs a number", bad.stderr.decode())
 
 
 if __name__ == "__main__":

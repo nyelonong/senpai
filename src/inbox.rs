@@ -32,6 +32,7 @@ const INBOX_ENV: &str = "SENPAI_INBOX";
 const IDLE_ENV: &str = "SENPAI_SERVE_IDLE";
 const NO_BROWSER_ENV: &str = "HTML_REVIEW_NO_BROWSER";
 const URL_FILE_ENV: &str = "HTML_REVIEW_URL_FILE";
+const SURFACE_ENV: &str = "SENPAI_SURFACE";
 const IDLE_SECONDS: f64 = 600.0;
 const START_WAIT: Duration = Duration::from_secs(10);
 const TAB_ALIVE: Duration = Duration::from_secs(8);
@@ -302,6 +303,97 @@ fn exchange(message: Object) -> Result<(BufReader<UnixStream>, Object)> {
     Err(Error::Launcher(last))
 }
 
+/// One request that needs no further reply, such as the terminal UI's.
+pub fn request(message: Object) -> Result<Object> {
+    exchange(message).map(|(_, reply)| reply)
+}
+
+/// Where a new item is brought to the person's attention.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum Surface {
+    Browser,
+    Rex,
+    Quiet,
+}
+
+fn rex_target() -> Option<(String, String)> {
+    let get = |name| std::env::var(name).ok().filter(|v| !v.trim().is_empty());
+    Some((get("REX_SESSION")?, get("REX_BLOCK")?))
+}
+
+/// `SENPAI_SURFACE`: `auto` (a Rex split inside Rex, else the browser),
+/// `browser`, `rex` or `none`. `HTML_REVIEW_NO_BROWSER` still turns the
+/// browser off.
+fn surface(browser: bool) -> Surface {
+    let value = std::env::var(SURFACE_ENV).unwrap_or_default();
+    let browser_or_quiet = if browser { Surface::Browser } else { Surface::Quiet };
+    match py_strip(&value).to_lowercase().as_str() {
+        "browser" => browser_or_quiet,
+        "rex" => Surface::Rex,
+        "none" => Surface::Quiet,
+        _ if rex_target().is_some() => Surface::Rex,
+        _ => browser_or_quiet,
+    }
+}
+
+/// Opens `senpai tui --item ID` in a split beside the agent's Rex pane.
+/// Failure is reported, never fatal: the item still waits in the inbox.
+fn open_rex_split(id: &Value) -> std::result::Result<(), String> {
+    let (session, block) = rex_target().ok_or("REX_SESSION and REX_BLOCK are not set")?;
+    let exe = std::env::current_exe().map_err(|e| e.to_string())?;
+    let id = match id {
+        Value::Int(id) => id.to_string(),
+        _ => return Err("the service did not name the item".into()),
+    };
+    let mut command = Command::new("rex");
+    command.args([
+        "split", "-s", &session, "-b", &block, "--split=right", "--focus=false", "--label", "senpai", "--shell=none", "--",
+    ]);
+    // The split runs with Rex's environment, not this process's, so the
+    // service location is passed on explicitly.
+    if let Some(home) = std::env::var_os(HOME_ENV).filter(|v| !v.is_empty()) {
+        let mut assignment = std::ffi::OsString::from(format!("{HOME_ENV}="));
+        assignment.push(home);
+        command.arg("/usr/bin/env").arg(assignment);
+    }
+    let mut child = command
+        .arg(exe)
+        .args(["tui", "--item", &id])
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .map_err(|e| format!("unable to run rex: {e}"))?;
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) if status.success() => return Ok(()),
+            Ok(Some(status)) => return Err(format!("rex split exited with {status}")),
+            Ok(None) if Instant::now() < deadline => thread::sleep(Duration::from_millis(50)),
+            Ok(None) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err("rex split did not finish".into());
+            }
+            Err(error) => return Err(error.to_string()),
+        }
+    }
+}
+
+/// Shows a new item where `surface` says; a failed Rex split falls back to
+/// the browser when it is allowed.
+fn present(surface: Surface, browser: bool, id: &Value, inbox: &str, producer: &str) {
+    if surface != Surface::Rex {
+        return;
+    }
+    if let Err(error) = open_rex_split(id) {
+        diag::write(&format!("{producer}: unable to open the review in Rex ({error})\n"));
+        if browser {
+            html::open_browser(inbox);
+        }
+    }
+}
+
 fn url_file() -> Option<Vec<u8>> {
     std::env::var_os(URL_FILE_ENV).map(|v| os::path_bytes(std::path::Path::new(&v)))
 }
@@ -332,7 +424,7 @@ pub fn submit_review(prepared: &Prepared, browser: bool, lifetime: f64, idle: f6
         .with("title", &prepared.title)
         .with("places", Value::Array(prepared.places.iter().map(Value::from).collect()))
         .with("payload", prepared.payload.clone())
-        .with("browser", browser)
+        .with("browser", surface(browser) == Surface::Browser)
         .with("lifetime", Value::Float(lifetime))
         .with("idle", Value::Float(idle));
     exit_with_parent();
@@ -343,6 +435,7 @@ pub fn submit_review(prepared: &Prepared, browser: bool, lifetime: f64, idle: f6
     diag::write(&format!("{}: inbox {inbox}\n", html::PRODUCER));
     let url_file = url_file();
     html::publish_url(url_file.as_deref(), &url);
+    present(surface(browser), browser, reply.get("id").unwrap_or(&Value::Null), &inbox, html::PRODUCER);
     let message = read_message(&mut reader);
     html::withdraw_url(url_file.as_deref());
     let stopped = || Error::Other("the senpai service stopped before a decision; no approval was returned".into());
@@ -387,6 +480,11 @@ impl Ask {
     }
 }
 
+enum Found {
+    Review(Arc<Session>, &'static str, PyStr, String),
+    Question(Arc<Ask>, PyStr, String),
+}
+
 enum Kind {
     Review { session: Arc<Session>, mode: &'static str },
     Question(Arc<Ask>),
@@ -394,6 +492,9 @@ enum Kind {
 
 struct Item {
     id: u64,
+    /// A random secret per item. Ids restart with the service; the key does
+    /// not, so a decision from the terminal reaches only the item it showed.
+    key: String,
     title: PyStr,
     places: Vec<PyStr>,
     created: Instant,
@@ -442,7 +543,11 @@ impl Service {
         let mut inbox = self.lock();
         inbox.next_id += 1;
         let id = inbox.next_id;
-        inbox.items.push(Item { id, title, places, created: Instant::now(), kind });
+        let key = match &kind {
+            Kind::Review { session, .. } => session.token().to_string(),
+            Kind::Question(_) => os::token_urlsafe(24),
+        };
+        inbox.items.push(Item { id, key, title, places, created: Instant::now(), kind });
         id
     }
 
@@ -473,9 +578,12 @@ impl Service {
         }
     }
 
-    fn items_json(&self) -> Vec<u8> {
+    /// The waiting items. Only the browser page counts as an open inbox tab.
+    fn items_value(&self, from_page: bool) -> Value {
         let mut inbox = self.lock();
-        inbox.last_poll = Some(Instant::now());
+        if from_page {
+            inbox.last_poll = Some(Instant::now());
+        }
         let items: Vec<Value> = inbox
             .items
             .iter()
@@ -495,7 +603,19 @@ impl Service {
                 })
             })
             .collect();
-        json::dumps(&Value::Object(Object::new().with("items", Value::Array(items))), json::COMPACT).into_bytes()
+        Value::Array(items)
+    }
+
+    fn items_json(&self) -> Vec<u8> {
+        let items = self.items_value(true);
+        json::dumps(&Value::Object(Object::new().with("items", items)), json::COMPACT).into_bytes()
+    }
+
+    fn find(&self, id: i128) -> Option<Found> {
+        self.lock().items.iter().find(|item| item.id as i128 == id).map(|item| match &item.kind {
+            Kind::Review { session, mode } => Found::Review(Arc::clone(session), mode, item.title.clone(), item.key.clone()),
+            Kind::Question(ask) => Found::Question(Arc::clone(ask), item.title.clone(), item.key.clone()),
+        })
     }
 
     fn question(&self, id: i128) -> Option<Arc<Ask>> {
@@ -639,7 +759,11 @@ fn serve_connection(service: &Arc<Service>, stream: UnixStream) {
             let session = Arc::new(Session::new(&prepared, os::token_urlsafe(24), None));
             let item_url = format!("{}{}/", service.url.trim_end_matches(&format!("{}/", service.token)), session.token());
             let id = service.add(title.clone(), places, Kind::Review { session: Arc::clone(&session), mode });
-            if reply(&mut writer, Object::new().with("url", item_url).with("inbox", service.url.as_str())).is_err() {
+            let accepted = Object::new()
+                .with("url", item_url)
+                .with("inbox", service.url.as_str())
+                .with("id", Value::Int(id as i128));
+            if reply(&mut writer, accepted).is_err() {
                 session.stop();
             }
             service.announce(browser, &title);
@@ -678,6 +802,60 @@ fn serve_connection(service: &Arc<Service>, stream: UnixStream) {
             service.remove(id);
             let _ = reply(&mut writer, Object::new().with("answer", answer));
         }
+        "items" => {
+            let _ = reply(&mut writer, Object::new().with("items", service.items_value(false)));
+        }
+        "payload" => {
+            let id = message.get("id").and_then(Value::as_int).unwrap_or(-1);
+            let answer = match service.find(id) {
+                Some(Found::Review(session, mode, title, key)) => {
+                    session.mark_opened();
+                    let payload = std::str::from_utf8(session.payload_json())
+                        .ok()
+                        .and_then(|t| json::loads_str(t).ok())
+                        .unwrap_or(Value::Null);
+                    Object::new().with("kind", mode).with("title", title).with("key", key).with("payload", payload)
+                }
+                Some(Found::Question(ask, title, key)) => Object::new()
+                    .with("kind", "question")
+                    .with("key", key)
+                    .with("title", title)
+                    .with("options", Value::Array(ask.options.iter().map(Value::from).collect())),
+                None => Object::new().with("error", "that item is no longer waiting"),
+            };
+            let _ = reply(&mut writer, answer);
+        }
+        "decide" => {
+            let id = message.get("id").and_then(Value::as_int).unwrap_or(-1);
+            let decision = message.get("decision").cloned().unwrap_or(Value::Null);
+            let key = text_field(&message, "key").map(|k| k.display()).unwrap_or_default();
+            let found = service.find(id).filter(|found| {
+                let (Found::Review(.., expected) | Found::Question(.., expected)) = found;
+                html::constant_time_eq(&key, expected)
+            });
+            let outcome = match found {
+                Some(Found::Review(session, ..)) => session.decide_value(&decision),
+                Some(Found::Question(..)) => {
+                    let mut answer = decision.as_object().cloned().unwrap_or_default();
+                    answer.insert("id", Value::Int(id));
+                    parse_answer_value(&Value::Object(answer), service).and_then(|(ask, value)| {
+                        if ask.settle(value) {
+                            Ok(())
+                        } else {
+                            Err("that question is no longer waiting".into())
+                        }
+                    })
+                }
+                None => Err("that item is no longer waiting".into()),
+            };
+            let _ = reply(
+                &mut writer,
+                match outcome {
+                    Ok(()) => Object::new().with("decided", true),
+                    Err(text) => Object::new().with("error", text),
+                },
+            );
+        }
         _ => {
             let _ = reply(&mut writer, Object::new().with("error", "unknown request"));
         }
@@ -689,6 +867,10 @@ fn parse_answer(body: &[u8], service: &Service) -> std::result::Result<(Arc<Ask>
         .ok()
         .and_then(|t| json::loads_str(t).ok())
         .ok_or("the answer is not valid JSON")?;
+    parse_answer_value(&value, service)
+}
+
+fn parse_answer_value(value: &Value, service: &Service) -> std::result::Result<(Arc<Ask>, Value), String> {
     let object = value.as_object().ok_or("the answer must be a JSON object")?;
     let id = object.get("id").and_then(Value::as_int).ok_or("the answer needs the question id")?;
     let ask = service.question(id).ok_or("that question is no longer waiting")?;
@@ -989,7 +1171,7 @@ pub fn ask_main(argv: &[PyStr]) -> i32 {
         .with("title", &question)
         .with("place", context)
         .with("options", Value::Array(options.iter().map(Value::from).collect()))
-        .with("browser", browser_allowed());
+        .with("browser", surface(browser_allowed()) == Surface::Browser);
     let (mut reader, reply) = match exchange(message) {
         Ok(pair) => pair,
         Err(error) => return fail(error.message()),
@@ -997,6 +1179,7 @@ pub fn ask_main(argv: &[PyStr]) -> i32 {
     let question_id = reply.get("question_id").cloned().unwrap_or(Value::Null);
     if let Some(inbox) = text_field(&reply, "inbox") {
         diag::write(&format!("senpai ask: waiting for an answer in the inbox {}\n", inbox.display()));
+        present(surface(browser_allowed()), browser_allowed(), &question_id, &inbox.display(), "senpai ask");
     }
     let _ = reader.get_ref().set_read_timeout(timeout.map(Duration::from_secs));
     let answer = match read_message(&mut reader) {
