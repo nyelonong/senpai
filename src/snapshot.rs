@@ -412,6 +412,68 @@ pub fn collect_snapshot(git: &dyn Git, repositories: &[Repository]) -> Result<Sn
 }
 
 #[cfg(test)]
+mod fingerprint_tests {
+    use super::*;
+
+    fn file(path: PyStr, old: Option<&str>, mode: &str, old_mode: &str, content: &str, patch: &str) -> FileSnapshot {
+        FileSnapshot {
+            path,
+            old_path: old.map(PyStr::from),
+            mode: mode.into(),
+            old_mode: old_mode.into(),
+            content_hash: content.into(),
+            patch_hash: patch.into(),
+        }
+    }
+
+    /// Values computed by the last Python client (commit 7659d0c) for the
+    /// same inputs, so existing approvals keep matching this formula.
+    #[test]
+    fn fingerprints_match_the_recorded_python_client() {
+        let h = |c: char| c.to_string().repeat(64);
+        let cases = [
+            (
+                fingerprint_repository(
+                    &"/repo".into(),
+                    &"a".repeat(40),
+                    &None,
+                    &[file("a.py".into(), None, "100644", "100644", &h('c'), &h('p'))],
+                ),
+                "e68059bbb03f70bb960e9937ef0d90f6669f7c10e797c5949bc1c535d5d6fadc",
+            ),
+            (
+                fingerprint_repository(
+                    &"/srv/repo two".into(),
+                    &"b".repeat(40),
+                    &Some(vec!["src".into(), "docs/x.md".into()]),
+                    &[
+                        file("src/new.rs".into(), Some("src/old.rs"), "100755", "100644", &h('d'), &h('e')),
+                        file("docs/x.md".into(), None, "000000", "100644", "", &h('f')),
+                    ],
+                ),
+                "3649a836190d6d401db4d4d6cf3ad3e6143304777478cc0d62391947c3abe77c",
+            ),
+            (
+                fingerprint_repository(
+                    &"/repo".into(),
+                    "4b825dc642cb6eb9a060e54bf8d69288fbee4904",
+                    &None,
+                    &[file(PyStr::decode_surrogateescape(b"caf\xe9.txt"), None, "120000", "", &h('1'), &h('2'))],
+                ),
+                "f09564491be5f07531240e231f0fe89ccb40f2ab18436fbf5728164c2d15e14a",
+            ),
+            (
+                fingerprint_repository(&"/repo".into(), &"a".repeat(40), &Some(Vec::new()), &[]),
+                "e0431bd7e2bb4f019911ec83d0167cbf19fa055b2dc960a1cf1afea707ac0010",
+            ),
+        ];
+        for (index, (actual, expected)) in cases.into_iter().enumerate() {
+            assert_eq!(actual.expect("fingerprint"), expected, "case {index}");
+        }
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
 

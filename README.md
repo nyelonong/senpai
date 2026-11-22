@@ -266,16 +266,17 @@ is decided, here or in the browser. Press `?` for all keys.
 ```sh
 cargo clippy --release --all-targets -- -D warnings
 cargo test --release
-python3 -m unittest discover -s tests -v
 node --test tests/test_diff_view.js
 ```
 
-The Python suite drives the release binary as a black box (`SENPAI_BINARY`
-overrides it). It turns the inbox off for every process it starts, except
-`tests/test_inbox.py`, which runs its own service in a private `SENPAI_HOME`,
-and hides any Rex or Tern session it runs in; Rex and Tern are tested with fake `rex` and `tern` commands. `tests/test_rust_parity.py` also compares it with the last Python
-client, extracted from git history. Golden cases recorded from that client live
-in `tests/golden/` and are replayed by `cargo test`.
+`cargo test --release` runs the unit tests in `src/` and the black-box suite
+in `tests/black_box/`, which drives the built binary from the outside
+(`SENPAI_BINARY` overrides it) and checks its exit codes, JSON, ledger, pages and
+inbox. Every command it starts has the inbox, Rex, Tern and terminal-browser
+switched off unless a test turns one on with a private `SENPAI_HOME` and fake
+`rex`/`tern` commands, which the test binary plays itself. Golden cases recorded
+from the last Python client live in `tests/golden/` and are replayed by the unit
+tests.
 
 No GitHub Actions workflow is provided; run the checks locally.
 
