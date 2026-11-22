@@ -27,8 +27,7 @@ agent ──→ senpai ──→ git diff or document ──→ local browser �
 ```
 
 - One Rust binary plus Git and a local browser. The page, its scripts and fonts are built in; no Python, Node, editor or agent runtime needed.
-- Formats, exit codes, the `task-review-approval.jsonl` ledger and the `TASK_REVIEW_*`
-  variables are unchanged from the client that used to ship in agent-workflow.
+- Works with Claude Code, Codex, Pi and Gemini through its agent skill, or by hand from any shell.
 
 ## 入門 · Install
 
@@ -40,7 +39,7 @@ senpai skill install   # teach your coding agents to use it
 The script downloads the prebuilt binary for macOS (Apple Silicon or Intel) or
 Linux (x86_64 or arm64) from the [latest release](https://github.com/nyelonong/senpai/releases/latest),
 checks its SHA-256 and puts it in `~/.local/bin`. `SENPAI_INSTALL_DIR` picks
-another folder and `SENPAI_VERSION=v0.1.0` a specific release. Run it again to update.
+another folder and `SENPAI_VERSION=v0.1.1` a specific release. Run it again to update.
 
 With Rust instead:
 
@@ -50,6 +49,24 @@ cargo install --path .                                    # from a clone; rerun 
 ```
 
 `senpai --version` shows what is installed.
+
+## 始め · Quick start
+
+With the skill installed, ask your agent to review its work with senpai, for
+example: *"When you're done, ask me to review the diff with senpai."* The agent
+runs `senpai review`, the diff opens in your browser, and the agent waits.
+Comment on any line, then choose **Approve**, **Request changes** or **Return to
+planning**; the agent gets your comments and your decision.
+
+To try it by hand, run this in any Git repository with uncommitted changes:
+
+```sh
+senpai review --criterion "Try senpai" --repo "$(pwd -P)"
+```
+
+It prints the decision as JSON when you choose, and exits 0 only on Approve.
+The rest of this page is the full reference: scope, verification before a
+commit, document reviews, the inbox and the terminal view.
 
 ## 使い方 · Usage
 
