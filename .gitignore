@@ -2,3 +2,4 @@ __pycache__/
 *.pyc
 docs/
 /target/
+.DS_Store
