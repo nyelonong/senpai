@@ -8,7 +8,7 @@ Human review for coding agents: your agent asks, you look at the real diff, and 
 
 <a href="media/senpai-film.mp4"><img src="media/senpai-film-poster.jpg" alt="senpai, the film: a robot coding agent asks for review, a senpai stamps 承認 (approved) on the real diff" width="720"></a>
 
-<sub>▶ <a href="media/senpai-film.mp4">Watch the 28-second film</a> (sound on)</sub>
+<sub>▶ <a href="media/senpai-film.mp4">Watch the 24-second film</a> (sound on)</sub>
 
 </div>
 
@@ -317,8 +317,8 @@ No GitHub Actions workflow is provided; run the checks locally.
 - Owner-controlled code: [MIT](LICENSE).
 - Vendors retain their own MIT, ISC, BSD, Apache, dual MPL/Apache and OFL terms: [NOTICE](NOTICE).
 - Builds, hashes, existing modifications and version limits: [asset provenance](assets/PROVENANCE.md).
-- The film (`media/`) is not MIT-licensed. Its music is "Hooligans" by Michael Ramir C., used under the
-  [Mixkit Stock Music Free License](https://mixkit.co/license/#musicFree); its sky, senpai and robot art was generated
-  for this project with Google's Gemini image models. Share the film as it is; don't extract or reuse its music.
+- The film (`media/`) is not MIT-licensed. Its music is "anime" by PuyoPuyoMegaFan1234, an AI-generated track used
+  under the [Pixabay Content License](https://pixabay.com/service/license-summary/); its sky, senpai and robot art was
+  generated for this project with Google's Gemini image models. Share the film as it is; don't extract or reuse its music.
 
 <div align="center"><sub>おつかれさま — good work, senpai.</sub></div>
