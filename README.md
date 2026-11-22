@@ -1,10 +1,24 @@
-# senpai
+<div align="center">
 
-**Human-in-the-loop review for coding agents.**
+# 先輩 senpai
 
-A coding agent hands senpai its real working-tree diff or a plan document.
-senpai opens it in a local browser, blocks until a human decides, and records
-an approval bound to the exact reviewed state.
+**Every agent needs a senpai.**
+
+Human review for coding agents: your agent asks, you look at the real diff, and nothing ships until you stamp it.
+
+<a href="media/senpai-film.mp4"><img src="media/senpai-film-poster.jpg" alt="senpai, the film: a robot coding agent asks for review, a senpai stamps 承認 (approved) on the real diff" width="720"></a>
+
+<sub>▶ <a href="media/senpai-film.mp4">Watch the 28-second film</a> (sound on)</sub>
+
+</div>
+
+## The story so far
+
+Your coding agent is the **kōhai** (後輩, the junior). It hands senpai its real
+working-tree diff or a plan document. senpai opens it in a local browser, blocks
+until you, the **senpai** (先輩), decide, and records an approval bound to the
+exact state you reviewed. Change one line afterwards and the stamp (承認, "approved")
+no longer fits: the kōhai has to ask again.
 
 ```text
 agent ──→ senpai ──→ git diff or document ──→ local browser ──→ human decision
@@ -17,9 +31,9 @@ agent ──→ senpai ──→ git diff or document ──→ local browser �
 - Formats, exit codes, the `task-review-approval.jsonl` ledger and the `TASK_REVIEW_*`
   variables are unchanged from the client that used to ship in agent-workflow.
 
-## Usage
+## 使い方 · Usage
 
-### 1. Review
+### 第1話 · Review
 
 ```sh
 SENPAI=/absolute/path/to/senpai   # e.g. ~/.cargo/bin/senpai, expanded
@@ -45,7 +59,7 @@ TARGET="$(cd /path/to/your/git-repository && pwd -P)"
 | **Return to planning** | Stop; revisit scope/plan |
 | **Cancelled** | Stop |
 
-### Delegated launch and recovery
+### Delegated launch and recovery (when the kōhai runs it)
 
 Invoke the canonical client in the native gate subagent's foreground command.
 Do not generate launch scripts, PID files, shell redirection or detached commands.
@@ -146,7 +160,7 @@ Guide format (replace the fingerprint and repository root):
   other backends fail explicitly rather than silently ignoring it.
 - Document reviews are unchanged.
 
-### 2. Verify and commit
+### 第2話 · Verify and commit
 
 ```text
 review → approve → verify → stage owned files → inspect → commit → consume
@@ -168,7 +182,7 @@ git -C "$TARGET" commit -m "Describe the verified change"
 - Local approval grants **no push, merge, deployment, recipient contact or publication authority**.
 - Read-only work needs no gate.
 
-### Documents
+### 第3話 · Documents
 
 ```sh
 "$SENPAI" review-doc \
@@ -204,7 +218,7 @@ git -C "$TARGET" commit -m "Describe the verified change"
 - Known RDG return failure: `io error: Bogus destination port`. Prefer HTML unless your build is verified.
 - Surface choice never relaxes protocol/fingerprint rules. Client/reviewer own timeout/parent-loss handling; runtime owns async waiting/wake-up/cancellation integration.
 
-### Inbox
+### Inbox · notice me, senpai
 
 The built-in HTML reviewer sends every review to one local inbox. The first
 review starts `senpai serve` in the background, and later reviews from any
@@ -279,7 +293,7 @@ reinstall; rerun `skill install` after moving the checkout.
 | Security | **Not a sandbox or tamper-proof barrier** against unrestricted shell/write access |
 | Fingerprint | State identity—not correctness, ownership or external-action permission |
 
-## Verification
+## 検証 · Verification
 
 ```sh
 cargo clippy --release --all-targets -- -D warnings
@@ -303,3 +317,8 @@ No GitHub Actions workflow is provided; run the checks locally.
 - Owner-controlled code: [MIT](LICENSE).
 - Vendors retain their own MIT, ISC, BSD, Apache, dual MPL/Apache and OFL terms: [NOTICE](NOTICE).
 - Builds, hashes, existing modifications and version limits: [asset provenance](assets/PROVENANCE.md).
+- The film (`media/`) is not MIT-licensed. Its music is "Hooligans" by Michael Ramir C., used under the
+  [Mixkit Stock Music Free License](https://mixkit.co/license/#musicFree); its sky, senpai and robot art was generated
+  for this project with Google's Gemini image models. Share the film as it is; don't extract or reuse its music.
+
+<div align="center"><sub>おつかれさま — good work, senpai.</sub></div>
