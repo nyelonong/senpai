@@ -27,16 +27,36 @@ agent ──→ senpai ──→ git diff or document ──→ local browser �
 ```
 
 - One Rust binary plus Git and a local browser. The page, its scripts and fonts are built in; no Python, Node, editor or agent runtime needed.
-- Install with `cargo install --path .` (to `~/.cargo/bin/senpai`), and rerun it after every update.
 - Formats, exit codes, the `task-review-approval.jsonl` ledger and the `TASK_REVIEW_*`
   variables are unchanged from the client that used to ship in agent-workflow.
+
+## 入門 · Install
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/nyelonong/senpai/main/install.sh | sh
+senpai skill install   # teach your coding agents to use it
+```
+
+The script downloads the prebuilt binary for macOS (Apple Silicon or Intel) or
+Linux (x86_64 or arm64) from the [latest release](https://github.com/nyelonong/senpai/releases/latest),
+checks its SHA-256 and puts it in `~/.local/bin`. `SENPAI_INSTALL_DIR` picks
+another folder and `SENPAI_VERSION=v0.1.0` a specific release. Run it again to update.
+
+With Rust instead:
+
+```sh
+cargo install --git https://github.com/nyelonong/senpai   # to ~/.cargo/bin/senpai
+cargo install --path .                                    # from a clone; rerun after every pull
+```
+
+`senpai --version` shows what is installed.
 
 ## 使い方 · Usage
 
 ### 第1話 · Review
 
 ```sh
-SENPAI=/absolute/path/to/senpai   # e.g. ~/.cargo/bin/senpai, expanded
+SENPAI=/absolute/path/to/senpai   # e.g. ~/.local/bin/senpai or ~/.cargo/bin/senpai, expanded
 TARGET="$(cd /path/to/your/git-repository && pwd -P)"
 
 "$SENPAI" review \
@@ -238,7 +258,7 @@ with nothing waiting.
 - **`ask`.** Prints `{"version": "1", "question_id": N, "option": …, "text": …}`. Exit 0 answered, 1 dismissed, 2 error or `TASK_REVIEW_TIMEOUT`. No ledger is written.
 - **One-off page.** `SENPAI_INBOX=0` gives each review its own page and server, as before the inbox.
 - **Files.** `~/Library/Application Support/senpai/` (mode 0700): `senpai.sock`, `serve.lock`, `serve.log`. `SENPAI_HOME` moves them; a Unix socket path must stay under 104 bytes. `SENPAI_SERVE_IDLE` sets the idle exit in seconds.
-- **Updates.** After `cargo install`, an idle service from the old build restarts on the next request. One with items still waiting keeps running, and new requests fail until those items finish or you run `senpai serve --stop`.
+- **Updates.** After an update, an idle service from the old build restarts on the next request. One with items still waiting keeps running, and new requests fail until those items finish or you run `senpai serve --stop`.
 
 ### Tern
 
@@ -276,9 +296,14 @@ policy, not this skill's.
 ```
 
 Agents that are not installed are skipped, and anything at `skills/senpai` that
-senpai did not put there is reported and left alone. The links point at this
-checkout (`SENPAI_SKILL_DIR` overrides it), so pulling a new skill needs no
-reinstall; rerun `skill install` after moving the checkout.
+senpai did not put there is reported and left alone. A binary built from a clone
+links to that clone's `skills/senpai`, so pulling a new skill needs no reinstall;
+rerun `skill install` after moving the clone. A downloaded or `cargo install --git`
+binary carries the skill inside it: `skill install` writes it to senpai's own
+folder and links there, and `skill check` reports `stale` until you run
+`skill install` again after an update. `SENPAI_SKILL_DIR` names another skill
+folder, or `built-in` to use the binary's copy even from a clone. `skill remove`
+takes away the agents' links and copies but keeps the stored copy in senpai's folder.
 
 ### Privacy and trust
 
@@ -310,7 +335,9 @@ switched off unless a test turns one on with a private `SENPAI_HOME` and fake
 from the last Python client live in `tests/golden/` and are replayed by the unit
 tests.
 
-No GitHub Actions workflow is provided; run the checks locally.
+Run these checks locally before a change. Pushing a `v*` tag runs them on macOS and
+Linux in GitHub Actions, then builds the release binaries and publishes them with
+their checksums (`.github/workflows/release.yml`).
 
 ## License and assets
 

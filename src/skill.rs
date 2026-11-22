@@ -1,6 +1,9 @@
 //! `senpai skill install|check|remove`: puts the `senpai` agent skill where
 //! each coding agent looks for skills. Agents that follow links get a link to
-//! the skill in this checkout; Gemini, which does not, gets a marked copy.
+//! the skill in the checkout senpai was built from, or, for a downloaded or
+//! `cargo install --git` binary, to the copy built into the binary, which
+//! `install` writes into senpai's home; Gemini, which does not follow links,
+//! gets a marked copy.
 //! Nothing is created for an agent that is not installed, and nothing senpai
 //! cannot prove it put there is ever replaced or removed.
 
@@ -11,6 +14,10 @@ use crate::pystr::PyStr;
 
 const SKILL_DIR_ENV: &str = "SENPAI_SKILL_DIR";
 const BUILT_SKILL_DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/skills/senpai");
+const BUILT_IN_SKILL: &str = include_str!("../skills/senpai/SKILL.md");
+/// `SENPAI_SKILL_DIR=built-in` uses the copy built into the binary even when the
+/// checkout it was built from is still there.
+const BUILT_IN_CHOICE: &str = "built-in";
 /// Marks a copied skill as senpai's own. Its first line is the absolute source
 /// directory; every further line is one file senpai copied, relative to the
 /// copy. A copy holding anything else is not senpai's to delete.
@@ -45,17 +52,62 @@ fn places(home: &Path) -> Vec<Place> {
     ]
 }
 
-fn source() -> Result<PathBuf, String> {
-    let dir = std::env::var_os(SKILL_DIR_ENV)
-        .filter(|v| !v.is_empty())
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from(BUILT_SKILL_DIR));
-    let dir = std::fs::canonicalize(&dir).map_err(|_| format!("no senpai skill at {}; set {SKILL_DIR_ENV}", dir.display()))?;
+/// Where the skill comes from, and whether that copy is current.
+struct Source {
+    dir: PathBuf,
+    /// False when the built-in copy in senpai's home is missing or older than
+    /// this binary's: every place then counts as stale until `install`.
+    current: bool,
+}
+
+fn source(write_built_in: bool) -> Result<Source, String> {
+    let chosen = std::env::var_os(SKILL_DIR_ENV).filter(|v| !v.is_empty()).map(PathBuf::from);
+    let use_built_in = chosen.as_deref() == Some(Path::new(BUILT_IN_CHOICE));
+    if let Some(dir) = chosen.filter(|_| !use_built_in) {
+        return checked(&dir).map(|dir| Source { dir, current: true });
+    }
+    let built = PathBuf::from(BUILT_SKILL_DIR);
+    if !use_built_in && is_senpai_skill(&built) && !in_cargo_cache(&built) {
+        return checked(&built).map(|dir| Source { dir, current: true });
+    }
+    let home = if write_built_in { crate::inbox::ensure_home() } else { crate::inbox::home() };
+    built_in(&home.map_err(|e| e.message())?.join("skills/senpai"), write_built_in)
+}
+
+fn checked(dir: &Path) -> Result<PathBuf, String> {
+    let dir = std::fs::canonicalize(dir).map_err(|_| format!("no senpai skill at {}; set {SKILL_DIR_ENV}", dir.display()))?;
     if is_senpai_skill(&dir) {
         Ok(dir)
     } else {
         Err(format!("{} holds no SKILL.md named senpai", dir.display()))
     }
+}
+
+/// A checkout cargo made for `cargo install --git` can be cleaned away at any
+/// time, so links never point into it.
+fn in_cargo_cache(dir: &Path) -> bool {
+    let text = dir.to_string_lossy();
+    text.contains("/git/checkouts/") || text.contains("/registry/src/")
+}
+
+/// The skill built into this binary, kept at `dir` in senpai's home.
+fn built_in(dir: &Path, write: bool) -> Result<Source, String> {
+    let file = dir.join("SKILL.md");
+    let current = std::fs::read_to_string(&file).is_ok_and(|text| text == BUILT_IN_SKILL);
+    if write && !current {
+        let failure = |e: std::io::Error| format!("unable to write {}: {e}", file.display());
+        std::fs::create_dir_all(dir).map_err(failure)?;
+        let staging = dir.join(format!(".SKILL.md.{}", std::process::id()));
+        if let Err(error) = std::fs::write(&staging, BUILT_IN_SKILL).and_then(|()| std::fs::rename(&staging, &file)) {
+            let _ = std::fs::remove_file(&staging);
+            return Err(failure(error));
+        }
+    }
+    if !write && !file.exists() {
+        return Ok(Source { dir: dir.to_path_buf(), current: false });
+    }
+    let dir = checked(dir)?;
+    Ok(Source { dir, current: current || write })
 }
 
 fn is_senpai_skill(dir: &Path) -> bool {
@@ -142,9 +194,12 @@ fn same_files(source: &Path, copied: &[PathBuf]) -> bool {
 }
 
 /// `linked`, `stale`, `missing`, `foreign` or `skipped` (agent not installed).
-fn state(place: &Place, source: &Path) -> &'static str {
+fn state(place: &Place, source: &Path, current: bool) -> &'static str {
     if !place.root.is_dir() {
         return "skipped";
+    }
+    if !current && !matches!(inspect(place), Found::Missing | Found::Foreign) {
+        return "stale";
     }
     match inspect(place) {
         Found::Missing => "missing",
@@ -264,7 +319,7 @@ pub fn main(argv: &[PyStr]) -> i32 {
         eprintln!("senpai skill: HOME is not set");
         return crate::EXIT_ERROR;
     };
-    let source = match source() {
+    let Source { dir: source, current } = match source(action == "install") {
         Ok(source) => source,
         Err(message) => {
             eprintln!("senpai skill: {message}");
@@ -282,9 +337,9 @@ pub fn main(argv: &[PyStr]) -> i32 {
     let mut rows = Vec::new();
     let (mut complete, mut failed) = (true, false);
     for place in &places {
-        let before = state(place, &source);
+        let before = state(place, &source, current);
         let outcome = match (action.as_str(), before) {
-            ("install", "missing" | "stale") => install(place, &source).map(|()| state(place, &source)),
+            ("install", "missing" | "stale") => install(place, &source).map(|()| state(place, &source, current)),
             ("remove", "linked" | "stale") => remove_ours(place).map(|()| "removed"),
             (_, state) => Ok(state),
         };
@@ -317,5 +372,45 @@ pub fn main(argv: &[PyStr]) -> i32 {
         crate::EXIT_OK
     } else {
         crate::EXIT_NOT_APPROVED
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn scratch(name: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("senpai-skill-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        dir
+    }
+
+    #[test]
+    fn built_in_skill_is_written_once_and_checked_after() {
+        let dir = scratch("built-in").join("skills/senpai");
+        let before = built_in(&dir, false).expect("check without a copy");
+        assert!(!before.current);
+        assert!(!dir.exists(), "check never writes");
+
+        let installed = built_in(&dir, true).expect("install");
+        assert!(installed.current);
+        assert_eq!(std::fs::read_to_string(dir.join("SKILL.md")).unwrap(), BUILT_IN_SKILL);
+
+        std::fs::write(dir.join("SKILL.md"), "---\nname: senpai\n---\nolder\n").unwrap();
+        assert!(!built_in(&dir, false).expect("check an older copy").current);
+        assert!(built_in(&dir, true).expect("reinstall").current);
+        assert_eq!(std::fs::read_to_string(dir.join("SKILL.md")).unwrap(), BUILT_IN_SKILL);
+        let _ = std::fs::remove_dir_all(dir.parent().unwrap().parent().unwrap());
+    }
+
+    #[test]
+    fn cargo_checkouts_are_not_link_targets() {
+        assert!(in_cargo_cache(Path::new("/Users/a/.cargo/git/checkouts/senpai-1/abc/skills/senpai")));
+        assert!(!in_cargo_cache(Path::new("/Users/a/Projects/senpai/skills/senpai")));
+    }
+
+    #[test]
+    fn the_built_in_skill_is_named_senpai() {
+        assert!(BUILT_IN_SKILL.lines().take(5).any(|line| line.trim() == "name: senpai"));
     }
 }

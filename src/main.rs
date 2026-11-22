@@ -40,6 +40,10 @@ pub const EXIT_ERROR: i32 = 2;
 
 fn main() -> ExitCode {
     let argv: Vec<PyStr> = std::env::args_os().skip(1).map(|a| PyStr::from_os(&a)).collect();
+    if argv.len() == 1 && matches!(argv[0].display().as_str(), "--version" | "-V") {
+        println!("senpai {}", env!("CARGO_PKG_VERSION"));
+        return ExitCode::from(EXIT_OK as u8);
+    }
     let service_command: Option<fn(&[PyStr]) -> i32> = match argv.first().map(PyStr::display).as_deref() {
         Some("html-review") => Some(html::main),
         Some("serve") => Some(inbox::serve_main),

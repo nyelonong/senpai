@@ -53,7 +53,7 @@ pub fn enabled() -> bool {
 // files
 // ---------------------------------------------------------------------------
 
-fn home() -> Result<PathBuf> {
+pub(crate) fn home() -> Result<PathBuf> {
     if let Some(value) = std::env::var_os(HOME_ENV).filter(|v| !v.is_empty()) {
         return Ok(PathBuf::from(value));
     }
@@ -69,7 +69,7 @@ fn home() -> Result<PathBuf> {
 }
 
 /// The service directory, private to this user.
-fn ensure_home() -> Result<PathBuf> {
+pub(crate) fn ensure_home() -> Result<PathBuf> {
     let dir = home()?;
     let failure = |e: std::io::Error| Error::Other(format!("unable to prepare {}: {e}", dir.display()));
     std::fs::create_dir_all(&dir).map_err(failure)?;

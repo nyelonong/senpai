@@ -154,7 +154,7 @@ chat fallback is permitted; a supported replacement requires explicit authorizat
 
 ## Commands
 
-The client is the installed `senpai` binary, never a script in the repository under review. Call it by its absolute path (usually `~/.cargo/bin/senpai`, expanded); `senpai` below means that path.
+The client is the installed `senpai` binary, never a script in the repository under review. Call it by its absolute path (usually `~/.local/bin/senpai` or `~/.cargo/bin/senpai`, expanded; `command -v senpai` finds it); `senpai` below means that path.
 
 - `review --criterion TEXT --repo ROOT [--paths a,b] --recovery-dir PATH`
   opens the review, retains client-owned artifacts, and waits for a human decision.

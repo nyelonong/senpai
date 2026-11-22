@@ -14,6 +14,6 @@ cargo test --release
 node --test tests/test_diff_view.js
 ```
 
-After changing the binary, run `cargo install --path .` so agents use the new build. `skills/senpai/SKILL.md` is the agent skill; keep it in step with the commands it documents.
+After changing the binary, run `cargo install --path .` so agents use the new build. To release, bump `version` in `Cargo.toml`, commit, and push a matching `v*` tag; `.github/workflows/release.yml` tests, builds and publishes. `skills/senpai/SKILL.md` is the agent skill; keep it in step with the commands it documents.
 
 Do not create or publish a remote without explicit approval.

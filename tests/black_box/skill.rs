@@ -17,7 +17,50 @@ pub const TESTS: &[(&str, fn())] = &[
     ("a_link_to_a_moved_checkout_is_replaced", a_link_to_a_moved_checkout_is_replaced),
     ("remove_keeps_foreign_links", remove_keeps_foreign_links),
     ("missing_home_or_source_is_an_error", missing_home_or_source_is_an_error),
+    ("the_built_in_skill_is_kept_in_senpais_home", the_built_in_skill_is_kept_in_senpais_home),
 ];
+
+/// A downloaded binary has no checkout: `SENPAI_SKILL_DIR=built-in` makes this
+/// one behave the same way, using the copy of SKILL.md built into it.
+fn built_in(home: &Path, senpai_home: &Path, action: &str) -> Run {
+    let mut command = senpai(["skill", action]);
+    command.env("HOME", home).env("SENPAI_SKILL_DIR", "built-in").env(HOME_ENV, senpai_home);
+    run(&mut command)
+}
+
+fn the_built_in_skill_is_kept_in_senpais_home() {
+    let tmp = TempDir::new();
+    let home = tmp.path().join("home");
+    let senpai_home = tmp.path().join("senpai-home");
+    std::fs::create_dir_all(home.join(".claude")).unwrap();
+    std::fs::create_dir_all(home.join(".gemini/config")).unwrap();
+    let stored = senpai_home.join("skills/senpai/SKILL.md");
+
+    let before = built_in(&home, &senpai_home, "check");
+    assert_eq!(before.code, EXIT_NOT_APPROVED, "{before:?}");
+    assert_eq!((state_of(&before, "claude"), state_of(&before, "gemini")), ("missing".into(), "missing".into()));
+    assert!(!senpai_home.exists(), "check never writes");
+
+    let installed = built_in(&home, &senpai_home, "install");
+    assert_eq!(installed.code, EXIT_OK, "{installed:?}");
+    assert_eq!(read(&stored), read(&source().join("SKILL.md")), "the stored copy is the built-in skill");
+    let link = std::fs::read_link(home.join(".claude/skills/senpai")).expect("claude gets a link");
+    assert_eq!(link, std::fs::canonicalize(senpai_home.join("skills/senpai")).unwrap());
+    assert_eq!(read(&home.join(".gemini/config/skills/senpai/SKILL.md")), read(&stored), "gemini gets a copy");
+    assert_eq!(built_in(&home, &senpai_home, "check").code, EXIT_OK);
+
+    write(&stored, "---\nname: senpai\n---\nan older build's skill\n");
+    let older = built_in(&home, &senpai_home, "check");
+    assert_eq!(older.code, EXIT_NOT_APPROVED, "{older:?}");
+    assert_eq!((state_of(&older, "claude"), state_of(&older, "gemini")), ("stale".into(), "stale".into()));
+    assert_eq!(built_in(&home, &senpai_home, "install").code, EXIT_OK);
+    assert_eq!(read(&stored), read(&source().join("SKILL.md")), "install brings the stored copy up to date");
+    assert_eq!(built_in(&home, &senpai_home, "check").code, EXIT_OK);
+
+    let removed = built_in(&home, &senpai_home, "remove");
+    assert_eq!((state_of(&removed, "claude"), state_of(&removed, "gemini")), ("removed".into(), "removed".into()));
+    assert!(std::fs::symlink_metadata(home.join(".claude/skills/senpai")).is_err());
+}
 
 fn skill_from(home: &Path, action: &str, source: &Path) -> Run {
     let mut command = senpai(["skill", action]);
