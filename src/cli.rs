@@ -204,10 +204,7 @@ fn is_option(sub: Option<&Subcommand>, token: &str) -> bool {
             return true;
         }
     }
-    if negative_number(token) || token.contains(' ') {
-        return false;
-    }
-    true
+    !(negative_number(token) || token.contains(' '))
 }
 
 fn find_option<'a>(sub: &'a Subcommand, flag: &str) -> Result<Option<&'a OptionSpec>, String> {
