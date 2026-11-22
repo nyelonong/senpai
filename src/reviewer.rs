@@ -298,6 +298,18 @@ pub fn run_reviewer(launch: &Launch, mut started: impl FnMut(u32, &[String]) -> 
             thread::sleep(Duration::from_millis(20));
         }
     })();
+    if outcome.is_err() {
+        // A reviewer that is still running gets a moment to tidy up, such as
+        // closing a pane it opened, before its whole group is killed.
+        // SAFETY: signals the reviewer process this function started.
+        unsafe {
+            libc::kill(pid as libc::pid_t, libc::SIGTERM);
+        }
+        let grace = Instant::now() + Duration::from_secs(3);
+        while Instant::now() < grace && matches!(child.try_wait(), Ok(None)) {
+            thread::sleep(Duration::from_millis(20));
+        }
+    }
     kill_group();
     let status = child.wait().map_err(|e| Error::Launcher(e.to_string()))?;
     let output = reader.join().unwrap_or_default();

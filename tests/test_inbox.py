@@ -471,12 +471,24 @@ class TerminalSurfaceTest(InboxCase):
         code, result, _ = self.finish(process)
         self.assertEqual((code, result["option"]), (commands.EXIT_OK, "8080"))
 
-    def fake_rex(self, exit_code: int = 0) -> Path:
+    def fake_rex(self, exit_code: int = 0, pane_stays: bool = True) -> Path:
+        """A `rex` that records its arguments; `split --json` makes block:page."""
         bin_dir = self.temp / "bin"
         bin_dir.mkdir(exist_ok=True)
         record = self.temp / "rex-calls"
         rex = bin_dir / "rex"
-        rex.write_text(f"#!/bin/sh\nprintf '%s\\n' \"$@\" >> {record}\necho --- >> {record}\nexit {exit_code}\n")
+        rex.write_text(f"""#!{sys.executable} -I
+import json, sys
+args = sys.argv[1:]
+with open({str(record)!r}, "a") as log:
+    log.write("\\n".join(args) + "\\n---\\n")
+if args[:1] == ["split"] and "--json" in args:
+    print(json.dumps({{"block_ids": ["block:page"]}}))
+elif args[:2] == ["block", "ls"]:
+    blocks = [{{"block_id": "block:agent"}}] + ([{{"block_id": "block:page"}}] if {pane_stays!r} else [])
+    print(json.dumps({{"blocks": blocks}}))
+sys.exit({exit_code})
+""")
         rex.chmod(0o755)
         self.env["PATH"] = f"{bin_dir}{os.pathsep}{self.env['PATH']}"
         self.env.update({"REX_SESSION": "session:test", "REX_BLOCK": "block:agent"})
@@ -612,6 +624,68 @@ else:
         self.assertEqual(ops[0]["url"], inbox)
         self.assertEqual(post(inbox + "api/answer", {"id": item["id"], "text": "yes"}), 204)
         self.assertEqual(self.finish(process)[0], commands.EXIT_OK)
+        self.assertEqual(self.tern_ops(record)[-1], {"op": "close", "block": 42})
+
+    def fake_terminal_browser(self) -> Path:
+        program = self.temp / "bin" / "terminal-browser"
+        program.parent.mkdir(exist_ok=True)
+        program.write_text("#!/bin/sh\nexit 0\n")
+        program.chmod(0o755)
+        self.env[commands.TERMINAL_BROWSER_ENV] = str(program)
+        return program
+
+    def test_rex_shows_the_real_page_with_terminal_browser(self) -> None:
+        record = self.fake_rex()
+        program = self.fake_terminal_browser()
+        process, url = self.review(self.repo("one"))
+        calls = wait_for(lambda: len(self.rex_calls(record)) >= 2 and self.rex_calls(record), message="the page pane")
+        self.assertEqual(calls[0], ["split", "-s", "session:test", "-b", "block:agent", "--split=right", "--focus=false",
+                                    "--label", "senpai", "--shell=none", "--json", "--", str(program), "open", url,
+                                    "--no-merge"])
+        self.assertEqual(calls[1], ["block", "ls", "-s", "session:test", "--json"])
+        self.assertEqual(post(url + "api/decision", {"decision": "approve", "annotations": []}), 204)
+        self.assertEqual(self.finish(process)[0], commands.EXIT_OK)
+        self.assertEqual(self.rex_calls(record)[-1],
+                         ["api", "call", "-s", "session:test", "block.close", '{"block_id":"block:page"}'])
+
+    def test_rex_falls_back_to_the_terminal_view_when_the_page_pane_closes(self) -> None:
+        record = self.fake_rex(pane_stays=False)
+        self.fake_terminal_browser()
+        process, _ = self.review(self.repo("one"))
+        calls = wait_for(lambda: len(self.rex_calls(record)) >= 4 and self.rex_calls(record), message="the fallback")
+        self.assertEqual(calls[2][:3], ["api", "call", "-s"], "the dead page pane is closed")
+        self.assertEqual(calls[3][-3:-1], ["tui", "--item"])
+        process.kill()
+        _, err = process.communicate()
+        self.assertIn("unable to open the page in Rex (the browser pane closed right away); using the terminal view",
+                      err.decode())
+
+    def test_killed_client_closes_the_rex_page_pane(self) -> None:
+        record = self.fake_rex()
+        self.fake_terminal_browser()
+        process, _ = self.review(self.repo("one"))
+        wait_for(lambda: len(self.rex_calls(record)) >= 2, message="the page pane")
+        process.kill()
+        process.communicate()
+        wait_for(lambda: self.rex_calls(record)[-1][:5] == ["api", "call", "-s", "session:test", "block.close"],
+                 message="the pane to close")
+
+    def test_timed_out_review_closes_its_page_pane(self) -> None:
+        self.env[commands.TIMEOUT_ENV] = "3"
+        record = self.fake_rex()
+        self.fake_terminal_browser()
+        process, _ = self.review(self.repo("one"))
+        code, _, err = self.finish(process)
+        self.assertEqual(code, commands.EXIT_ERROR, err)
+        self.assertEqual(self.rex_calls(record)[-1][:5], ["api", "call", "-s", "session:test", "block.close"])
+
+    def test_interrupted_question_closes_its_tern_page(self) -> None:
+        record = self.fake_tern()
+        process, _, _ = self.ask("--question", "Still there?")
+        wait_for(lambda: len(self.tern_ops(record)) >= 2, message="the tern page")
+        process.send_signal(signal.SIGINT)
+        process.communicate(timeout=30)
+        self.assertEqual(process.returncode, commands.EXIT_ERROR)
         self.assertEqual(self.tern_ops(record)[-1], {"op": "close", "block": 42})
 
     def test_tui_needs_a_terminal(self) -> None:

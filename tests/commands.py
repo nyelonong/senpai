@@ -43,10 +43,12 @@ SERVE_IDLE_ENV = "SENPAI_SERVE_IDLE"
 SURFACE_ENV = "SENPAI_SURFACE"
 REX_ENV = ("REX_SESSION", "REX_BLOCK")
 TERN_ENV = "TERN_PANE"
+TERMINAL_BROWSER_ENV = "SENPAI_TERMINAL_BROWSER"
 
 os.environ[INBOX_ENV] = "0"
 for _name in (SURFACE_ENV, *REX_ENV, TERN_ENV):
     os.environ.pop(_name, None)
+os.environ[TERMINAL_BROWSER_ENV] = "none"
 
 
 def client() -> list[str]:

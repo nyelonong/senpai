@@ -244,7 +244,7 @@ click a line or drag across lines to select them, click **Comment**, then
 for confirmation first. `senpai tui --item ID` opens one item and exits once it
 is decided, here or in the browser. Press `?` for all keys.
 
-- **Inside Rex.** When an agent runs in a Rex pane (`REX_SESSION` and `REX_BLOCK` are set), each new review or question opens `senpai tui --item ID` in a split beside that pane instead of a browser tab. The split closes after the decision. If the split fails, the item still waits in the inbox and the browser opens instead.
+- **Inside Rex.** When an agent runs in a Rex pane (`REX_SESSION` and `REX_BLOCK` are set), each new review opens in a split beside that pane instead of a browser tab. With `terminal-browser` installed, the split shows the real review page (a question shows the inbox); otherwise it runs `senpai tui --item ID`. The split closes after the decision. If neither can open, the item still waits in the inbox and the browser opens instead. `SENPAI_TERMINAL_BROWSER` names the program, or `none` to always use `senpai tui`.
 - **`SENPAI_SURFACE`** chooses where new items appear: `auto` (default: Tern inside Tern, Rex inside Rex, else the browser), `browser`, `tern`, `rex` or `none`.
 - **Same checks.** The terminal sends decisions to the service, which checks them exactly like the page's. Document reviews show the markdown source lines, so comments land on the same lines. The Guided tab and syntax colors stay in the browser.
 
