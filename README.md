@@ -6,9 +6,9 @@
 
 Human review for coding agents: your agent asks, you look at the real diff, and nothing ships until you stamp it.
 
-<a href="media/senpai-film.mp4"><img src="media/senpai-film-poster.jpg" alt="senpai, the film: a robot coding agent asks for review, a senpai stamps 承認 (approved) on the real diff" width="720"></a>
+https://github.com/user-attachments/assets/ca54d78c-e9fb-4deb-b499-7c11f3181977
 
-<sub>▶ <a href="media/senpai-film.mp4">Watch the 24-second film</a> (sound on)</sub>
+<sub>The 24-second film, sound on. No player? <a href="media/senpai-film.mp4">Download it</a>, or see the <a href="media/senpai-film-poster.jpg">poster</a>.</sub>
 
 </div>
 
