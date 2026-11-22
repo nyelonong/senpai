@@ -43,12 +43,18 @@ const PAGE_TEMPLATE: &str = include_str!("../assets/review-page.html");
 const DIFF_VIEW: &str = include_str!("../assets/review-diff.js");
 const CONTENT_SECURITY_POLICY: &str = "default-src 'none'; style-src 'unsafe-inline'; script-src 'self' 'unsafe-inline'; connect-src 'self'; font-src 'self'";
 
-const FONTS: [(&str, &[u8]); 4] = [
+const FONTS: [(&str, &[u8]); 5] = [
     ("jetbrains-mono-400.woff2", include_bytes!("../assets/fonts/jetbrains-mono-400.woff2")),
     ("jetbrains-mono-700.woff2", include_bytes!("../assets/fonts/jetbrains-mono-700.woff2")),
     ("inter-latin-var.woff2", include_bytes!("../assets/fonts/inter-latin-var.woff2")),
     ("source-serif-4-latin-var.woff2", include_bytes!("../assets/fonts/source-serif-4-latin-var.woff2")),
+    ("nunito-latin-var.woff2", include_bytes!("../assets/fonts/nunito-latin-var.woff2")),
 ];
+/// A bundled font by file name, for other pages served by senpai.
+pub(crate) fn font(name: &str) -> Option<&'static [u8]> {
+    FONTS.iter().find(|(n, _)| *n == name).map(|(_, data)| *data)
+}
+
 const VENDOR: [(&str, &[u8]); 5] = [
     ("markdown-it.min.js", include_bytes!("../assets/vendor/markdown-it.min.js")),
     ("markdown-it-task-lists.min.js", include_bytes!("../assets/vendor/markdown-it-task-lists.min.js")),

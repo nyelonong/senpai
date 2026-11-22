@@ -699,9 +699,16 @@ fn inbox_page_is_served() {
     let policy = response.header("Content-Security-Policy").expect("a Content-Security-Policy");
     assert!(policy.contains("default-src 'none'"), "{policy}");
     let base = inbox.rsplitn(3, '/').nth(2).expect("a base URL");
-    for path in ["/", "/wrong-token/", "/wrong-token/api/items"] {
+    for path in ["/", "/wrong-token/", "/wrong-token/api/items", "/wrong-token/font/nunito-latin-var.woff2"] {
         assert_eq!(get(&format!("{base}{path}")).status, 404, "{path}");
     }
+    assert!(page.contains(r#"src:url("font/nunito-latin-var.woff2")"#), "the inbox loads the bundled font");
+    let font = get(&format!("{inbox}font/nunito-latin-var.woff2"));
+    assert_eq!(font.status, 200);
+    assert_eq!(font.header("Content-Type"), Some("font/woff2"));
+    let bundled = std::fs::read(concat!(env!("CARGO_MANIFEST_DIR"), "/assets/fonts/nunito-latin-var.woff2")).expect("the bundled font");
+    assert_eq!(font.body, bundled, "the inbox serves the bundled font unchanged");
+    assert_eq!(get(&format!("{inbox}font/missing.woff2")).status, 404);
 }
 
 // -- questions ---------------------------------------------------------------

@@ -174,6 +174,8 @@ class Element {
   append(...children) { children.forEach(child => this.appendChild(child)); }
   appendChild(child) { child.parent = this; this.children.push(child); }
   replaceChildren(...children) { this.children = []; this.append(...children); }
+  after(node) { const siblings = this.parent.children; siblings.splice(siblings.indexOf(this) + 1, 0, node); node.parent = this.parent; }
+  remove() { if (this.parent) this.parent.children.splice(this.parent.children.indexOf(this), 1); this.parent = null; }
   setAttribute(name, value) { this.attributes[name] = value; }
   removeAttribute(name) { delete this.attributes[name]; }
   addEventListener(name, listener) { this.listeners[name] = listener; }
@@ -212,7 +214,7 @@ function page(lines) {
     visibleFiles: () => state.files.filter(file => file.path.includes(state.filter))};
   const functions = ['sideNumber', 'pathLabel', 'makeRow', 'makeSideCell', 'diffRow', 'setDiffView', 'renderDiff', 'renderFileDiff',
     'setReviewView', 'onReviewTabKey', 'renderGuideOverview', 'renderGuidedDiff', 'visibleFiles',
-    'markThreadedRows', 'lineNumberFor', 'paintSelection', 'onRowPress', 'extendDiffSelection', 'selectionTarget',
+    'markThreadedRows', 'threadCard', 'lineNumberFor', 'paintSelection', 'onRowPress', 'extendDiffSelection', 'selectionTarget',
     'jumpToThread', 'trackFile', 'markCodeChanges', 'readingPosition', 'restoreReadingPosition', 'setWrapLines',
     'onDiffKey', 'onSelectionEnter', 'showComposer', 'say', 'collectChangeStops', 'changeElement', 'trackChanges', 'stepChange'];
   vm.createContext(context);
@@ -634,4 +636,27 @@ test('review tabs support keyboard focus and cannot alter document or submitted 
   context.setReviewView('guided');
   assert.equal(state.reviewView, 'diff');
   assert.equal(prevented, 2);
+});
+
+test('a comment shows once as a card under its last line in both layouts and in Guided', () => {
+  for (const layout of ['inline', 'split']) {
+    const {context, state, ui} = guidedPage(layout);
+    const target = {scope: 'line', repository: '/repo', path: 'src/example.js', side: 'new', start_line: 1, end_line: 1};
+    state.threads.push({id: 1, text: '<b>literal</b>', target});
+    context.renderDiff();
+    context.markThreadedRows();
+    const cards = () => ui.diff.querySelectorAll('.thread-card');
+    assert.equal(cards().length, 1);
+    const row = context.diffRow(0, 2, 'new');
+    const anchor = layout === 'split' ? row.parent : row;
+    const siblings = anchor.parent.children;
+    assert.equal(siblings[siblings.indexOf(anchor) + 1], cards()[0]);
+    assert.ok(cards()[0].textContent.includes('<b>literal</b>'));
+    context.setReviewView('guided');
+    assert.equal(cards().length, 1);
+    state.threads = [];
+    context.markThreadedRows();
+    assert.equal(cards().length, 0);
+    assert.equal(context.diffRow(0, 2, 'new').classes.has('threaded'), false);
+  }
 });

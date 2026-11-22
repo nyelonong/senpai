@@ -24,6 +24,7 @@ compared to archive members; the task-list wrapper is the stated exception.
 | `fonts/source-serif-4-latin-var.woff2` | [@fontsource-variable/source-serif-4 5.0.20](https://registry.npmjs.org/%40fontsource-variable%2Fsource-serif-4/5.0.20) | `files/source-serif-4-latin-wght-normal.woff2` | [OFL-1.1](fonts/OFL-source-serif-4.txt), Reserved Font Name Source |
 | `fonts/jetbrains-mono-400.woff2` | [@fontsource/jetbrains-mono 5.0.20](https://registry.npmjs.org/%40fontsource%2Fjetbrains-mono/5.0.20) | `files/jetbrains-mono-latin-400-normal.woff2` | [OFL-1.1](fonts/OFL.txt) |
 | `fonts/jetbrains-mono-700.woff2` | Same JetBrains publication | `files/jetbrains-mono-latin-700-normal.woff2` | [OFL-1.1](fonts/OFL.txt) |
+| `fonts/nunito-latin-var.woff2` | [@fontsource-variable/nunito 5.3.0](https://registry.npmjs.org/%40fontsource-variable%2Fnunito/5.3.0) | `files/nunito-latin-wght-normal.woff2` | [OFL-1.1](fonts/OFL-nunito.txt) |
 
 Nerd-font names in CSS prefer fonts already installed on the user's system; no
 Nerd Font binary is bundled. Fonts above are redistributed unchanged with their
@@ -78,6 +79,7 @@ modification. They are content checks, not a security or vulnerability assessmen
 | `fonts/source-serif-4-latin-var.woff2` | `42c9a2125f752f225d8aa7b1d95075c4c6a7f91e78d521a50ae318b9ab15bd04` |
 | `fonts/jetbrains-mono-400.woff2` | `7c53386f55c866c1b4c9309c4bcf74eda10896aab3a1780b0af5cc4976e27a27` |
 | `fonts/jetbrains-mono-700.woff2` | `ed8b8f71b22bf3b6e1ec1cf9b24dd999785aae33d6256950c1f86c97e423b6ef` |
+| `fonts/nunito-latin-var.woff2` | `ba344451eab25b217a165363b1982048a5e5830a0daf36577973955a04cac793` |
 
 ## Updating assets
 

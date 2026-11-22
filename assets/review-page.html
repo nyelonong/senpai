@@ -6,25 +6,44 @@
 <title>Task review</title>
 <style>
 :root{
-  color-scheme: dark;
-  --sans:"Inter",-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
-  --serif:"Source Serif 4",Georgia,"Iowan Old Style","Times New Roman",serif;
+  color-scheme: light dark;
+  --font:"Nunito","Segoe UI",system-ui,-apple-system,sans-serif;
   --mono:"JetBrains Mono",ui-monospace,"SF Mono",SFMono-Regular,Menlo,monospace;
   --nerd:"FiraCode Nerd Font Mono","JetBrains Mono NF","Hack Nerd Font Mono",
          "JetBrains Mono","Nerd Font",ui-monospace,monospace;
-  --bg:#0b0d12; --surface:#12151d; --raised:#181c26; --sunken:#0e1118;
-  --line:#232936; --line-soft:#1b202b;
-  --fg:#e7ecf4; --muted:#93a0b5; --faint:#6a7a90;
-  --accent:#6ea8fe; --accent-ink:#0b1220; --accent-soft:rgba(110,168,254,.16);
-  --add-fg:#56d364; --del-fg:#ff7b72; --add-bg:rgba(86,211,100,.11); --del-bg:rgba(255,123,114,.11);
-  --add-line:rgba(86,211,100,.34); --del-line:rgba(255,123,114,.34);
-  --warn-bg:rgba(210,153,34,.14); --warn-fg:#e3b341;
-  --danger:#ff7b72; --ring:rgba(110,168,254,.45);
-  --shadow:0 1px 2px rgba(0,0,0,.4),0 12px 32px rgba(0,0,0,.45);
-  --r-sm:6px; --r-md:10px; --r-lg:14px;
+  --bg:#f6f8fc; --surface:#ffffff; --raised:#eef2f9; --sunken:#f3f6fb; --code-bg:#fbfcfe;
+  --fg:#16233b; --muted:#5b6b85; --faint:#7a879c;
+  --line:#c9d3e3; --line-soft:#e1e7f1;
+  --accent:#1352bf; --accent-soft:#e4edfc; --on-accent:#ffffff;
+  --add-bg:#e6f6ec; --add-fg:#1f7a4d; --add-edge:#9fd7b5;
+  --del-bg:#fdecec; --del-fg:#b3382f; --del-edge:#f0b4ae;
+  --warn-bg:#fff4d6; --warn-fg:#7a5600;
+  --tok-kw:#9a2f7c; --tok-str:#1f7a4d; --tok-com:#7a879c; --tok-num:#a3541a;
+  --tok-title:#1352bf; --tok-type:#8a5a00; --tok-tag:#b3382f;
+  --scrim:rgba(22,35,59,.38);
+  --shadow:0 1px 2px rgba(22,35,59,.08),0 12px 32px rgba(22,35,59,.16);
 }
-/* The code font ships with this reviewer and is served from the review's own
-   origin, so the page needs no network and its CSP names no third party. */
+@media (prefers-color-scheme: dark){
+  :root{
+    --bg:#0e1626; --surface:#162136; --raised:#1b2840; --sunken:#111a2c; --code-bg:#111a2c;
+    --fg:#e6ecf7; --muted:#9aa9c2; --faint:#7786a0;
+    --line:#33425e; --line-soft:#24324b;
+    --accent:#7fa8f5; --accent-soft:#1b2c4d; --on-accent:#0e1626;
+    --add-bg:#12301f; --add-fg:#8bd3a8; --add-edge:#2c6a47;
+    --del-bg:#3a1a1c; --del-fg:#f2a19a; --del-edge:#7d3a36;
+    --warn-bg:#3a2f12; --warn-fg:#f1cf7c;
+    --tok-kw:#e08fcb; --tok-str:#8bd3a8; --tok-com:#7786a0; --tok-num:#e6a977;
+    --tok-title:#9cbcf7; --tok-type:#f1cf7c; --tok-tag:#f2a19a;
+    --scrim:rgba(3,7,15,.62);
+    --shadow:0 1px 2px rgba(0,0,0,.4),0 12px 32px rgba(0,0,0,.45);
+  }
+}
+/* Fonts ship with this reviewer and are served from the review's own origin,
+   so the page needs no network and its CSP names no third party. */
+@font-face{
+  font-family:"Nunito"; src:url("font/nunito-latin-var.woff2") format("woff2");
+  font-weight:200 1000; font-style:normal; font-display:swap;
+}
 @font-face{
   font-family:"JetBrains Mono"; src:url("font/jetbrains-mono-400.woff2") format("woff2");
   font-weight:400; font-style:normal; font-display:swap;
@@ -33,435 +52,465 @@
   font-family:"JetBrains Mono"; src:url("font/jetbrains-mono-700.woff2") format("woff2");
   font-weight:700; font-style:normal; font-display:swap;
 }
-@font-face{
-  font-family:"Inter"; src:url("font/inter-latin-var.woff2") format("woff2");
-  font-weight:100 900; font-style:normal; font-display:swap;
-}
-@font-face{
-  font-family:"Source Serif 4"; src:url("font/source-serif-4-latin-var.woff2") format("woff2");
-  font-weight:200 900; font-style:normal; font-display:swap;
-}
 *{box-sizing:border-box}
 html,body{height:100%}
 body{
   margin:0; background:var(--bg); color:var(--fg);
-  font:14.5px/1.5 var(--sans);
+  font:14.5px/1.5 var(--font);
   -webkit-font-smoothing:antialiased; -moz-osx-font-smoothing:grayscale;
   display:grid; grid-template-rows:auto auto 1fr auto; overflow:hidden;
 }
-@media (prefers-reduced-motion: reduce){*{scroll-behavior:auto !important; transition:none !important}}
+@media (prefers-reduced-motion: reduce){*{scroll-behavior:auto !important; transition:none !important; animation:none !important}}
 code,kbd,.mono,.rows{font-family:var(--mono); font-variant-ligatures:none;
   font-feature-settings:"liga" 0,"calt" 0,"dlig" 0}
 /* In prose a snippet is read, not compared, so its ligatures are welcome. */
 body.document .md code,body.document .blk.code pre code{
   font-variant-ligatures:normal; font-feature-settings:"liga" 1,"calt" 1}
 button{
-  font:inherit; color:inherit; background:var(--raised); border:1px solid var(--line);
-  border-radius:var(--r-sm); padding:8px 14px; cursor:pointer; white-space:nowrap;
+  font:inherit; font-size:13px; font-weight:800; color:var(--fg); background:var(--surface);
+  border:1.5px solid var(--line); border-radius:8px; padding:6px 12px; cursor:pointer; white-space:nowrap;
   transition:background .12s ease,border-color .12s ease,color .12s ease;
 }
-button:hover:not(:disabled){border-color:var(--accent); color:var(--accent)}
-button:focus-visible,textarea:focus-visible,input:focus-visible,li:focus-visible,[tabindex]:focus-visible{
-  outline:2px solid var(--ring); outline-offset:2px; border-radius:var(--r-sm);
-}
+button:hover:not(:disabled){border-color:var(--accent)}
+button:focus-visible,textarea:focus-visible,input:focus-visible,li:focus-visible,a:focus-visible,
+summary:focus-visible,[tabindex]:focus-visible{outline:3px solid var(--accent); outline-offset:2px}
 button:disabled{opacity:.45; cursor:not-allowed}
-button.primary{background:var(--accent); border-color:var(--accent); color:var(--accent-ink); font-weight:600}
-button.primary:hover:not(:disabled){filter:brightness(1.08); color:var(--accent-ink)}
-button.danger{color:var(--danger); border-color:transparent; background:transparent}
-button.danger:hover:not(:disabled){border-color:var(--danger); color:var(--danger)}
-button.link{border:0; background:none; padding:2px 4px; color:var(--accent); text-decoration:underline}
-button.tiny{padding:5px 10px; font-size:13px; border-radius:var(--r-sm)}
-button.ghost{background:transparent}
+button.primary{background:var(--accent); border-color:var(--accent); color:var(--on-accent)}
+button.go{background:var(--add-fg); border-color:var(--add-fg); color:var(--surface)}
+button.primary:hover:not(:disabled),button.go:hover:not(:disabled){filter:brightness(1.08)}
+button.danger{color:var(--del-fg); border-color:var(--del-edge)}
+button.danger:hover:not(:disabled){border-color:var(--del-fg)}
+button.link{border:0; background:none; padding:2px 4px; color:var(--accent); text-decoration:underline; font-weight:700}
+button.tiny{padding:4px 10px; font-size:12.5px}
+button.ghost{background:transparent; border-color:transparent; color:var(--muted)}
+button.ghost:hover:not(:disabled){color:var(--fg)}
+button[aria-pressed="true"]{background:var(--accent-soft); border-color:var(--accent); color:var(--accent)}
 textarea,input{
-  font:inherit; width:100%; background:var(--sunken); color:var(--fg);
-  border:1px solid var(--line); border-radius:var(--r-sm); padding:9px 11px; resize:vertical;
+  font:inherit; width:100%; background:var(--surface); color:var(--fg);
+  border:1.5px solid var(--line); border-radius:8px; padding:8px 11px; resize:vertical;
 }
 textarea::placeholder,input::placeholder{color:var(--faint)}
 ul{list-style:none; margin:0; padding:0}
-h2{font-size:13px; text-transform:uppercase; letter-spacing:.08em; color:var(--muted); font-weight:600; margin:0}
+h2{font-size:11.5px; text-transform:uppercase; letter-spacing:.08em; color:var(--muted); font-weight:800; margin:0}
+kbd{
+  font:11px/1.6 var(--mono); border:1px solid var(--line); border-bottom-width:2px;
+  border-radius:4px; padding:0 5px; margin-left:6px; color:var(--muted); background:var(--bg);
+}
+button.primary kbd,button.go kbd{color:inherit; border-color:currentColor; background:transparent; opacity:.8}
 
 /* ---------------------------------------------------------------- header */
-header{
-  padding:14px 18px 12px; border-bottom:1px solid var(--line); background:var(--surface);
-  min-height:0; max-height:34vh; overflow:auto;
-}
+header{padding:16px 22px 10px; min-height:0; max-height:34vh; overflow:auto}
 /* The body is a four-row grid whose last row is the decision footer, and the
    body is overflow:hidden so the diff can scroll on its own. An unbounded
    header therefore does not just grow: a criterion with a long URL in it wraps
    until the header is taller than the window, the footer is pushed past the
    bottom edge, and every decision button becomes unreachable. Capping the
    header keeps the footer on screen; the header scrolls when it has to. */
-header .top{display:flex; align-items:flex-start; gap:12px; justify-content:space-between}
-header h1{
-  font-size:17px; line-height:1.35; font-weight:650; margin:0; letter-spacing:-.01em;
-  min-width:0; overflow-wrap:anywhere;
-}
-header .title{display:flex; align-items:center; gap:12px; flex-wrap:wrap; min-width:0}
-#task-summary{margin:8px 0; max-width:90ch; color:var(--fg); overflow-wrap:anywhere; line-height:1.5}
-#review-brief{margin-top:10px}
-#review-brief summary{cursor:pointer; color:var(--muted); font-size:13px; width:fit-content}
-#criterion{max-width:90ch; margin-top:10px; white-space:pre-wrap; overflow-wrap:anywhere; font-weight:400; line-height:1.65}
-header .meta{color:var(--muted); font-size:13px; margin-top:5px; display:flex; gap:8px; align-items:center; flex-wrap:wrap}
-header .meta code{font-size:13px; color:var(--faint)}
+.rhead{display:flex; flex-wrap:wrap; gap:10px 24px; align-items:flex-start; justify-content:space-between}
+.rhead .what{min-width:0; flex:1 1 420px; display:flex; flex-direction:column; gap:4px}
+.rhead .side{display:flex; gap:8px; align-items:center; flex-wrap:wrap}
+.eyebrow,header h1{font-size:11.5px; font-weight:800; letter-spacing:.08em; text-transform:uppercase; color:var(--accent); margin:0}
+#task-summary{font-size:19px; font-weight:800; margin:0; line-height:1.3; text-wrap:balance; overflow-wrap:anywhere; max-width:90ch}
+.where-line{display:flex; flex-wrap:wrap; gap:4px 12px; align-items:baseline; font:12px/1.5 var(--mono); color:var(--muted)}
+#repos{display:contents}
+#repos li,.docpath{overflow-wrap:anywhere}
+#review-id{color:var(--faint); font-size:12px}
+#review-brief{margin-top:8px}
+#review-brief summary{cursor:pointer; color:var(--muted); font-size:13px; font-weight:700; width:fit-content}
+#criterion{max-width:90ch; margin-top:8px; white-space:pre-wrap; overflow-wrap:anywhere; line-height:1.6;
+  background:var(--surface); border:1px solid var(--line); border-radius:10px; padding:12px 14px}
 .chips{display:flex; gap:6px; align-items:center; flex-wrap:wrap}
 .chip{
-  display:inline-flex; align-items:center; gap:5px; padding:3px 9px; border-radius:999px;
-  border:1px solid var(--line); background:var(--sunken); font-size:13px; color:var(--muted);
-  font-variant-numeric:tabular-nums;
+  display:inline-flex; align-items:center; gap:4px; padding:2px 10px; border-radius:999px;
+  background:var(--accent-soft); color:var(--accent); font-size:12.5px; font-weight:800;
+  white-space:nowrap; font-variant-numeric:tabular-nums;
 }
-.chip b{color:var(--fg); font-weight:600}
-.chip.add b{color:var(--add-fg)} .chip.del b{color:var(--del-fg)}
-.chip.repo{font-family:var(--mono); font-size:13px; max-width:100%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
+.chip.add{background:var(--add-bg); color:var(--add-fg)}
+.chip.del{background:var(--del-bg); color:var(--del-fg)}
+.chip.warn{background:var(--warn-bg); color:var(--warn-fg)}
 .chev{
   border:0; background:none; padding:0 2px; width:16px; flex:none;
   color:var(--muted); font-size:11px; line-height:1;
 }
-.chev:hover{color:var(--accent); border:0}
-.hint-list{margin:8px 0 0; padding:0 0 0 2px; list-style:none; color:var(--faint); font-size:13px; line-height:1.7}
-.hint-list kbd{margin-left:6px}
+.chev:hover:not(:disabled){color:var(--accent)}
 
 /* --------------------------------------------------------------- toolbar */
-#toolbar{
-  display:flex; gap:10px; align-items:center; padding:8px 18px;
-  border-bottom:1px solid var(--line); background:var(--surface);
-}
-#toolbar input{max-width:280px; font-size:13px; padding:7px 11px}
+#toolbar{display:flex; flex-wrap:wrap; gap:8px; align-items:center; padding:4px 22px 12px}
+#toolbar input{max-width:240px; font-size:13px; padding:5px 11px}
 #toolbar .spacer{flex:1}
-#toolbar .hint{color:var(--faint); font-size:13px}
-#files li{gap:2px}
-.fname{display:flex; align-items:center; gap:7px; min-width:0}
-.fname .path{overflow-wrap:anywhere}
-.path .directory{color:var(--muted); font-size:13px; font-weight:400}
-.path strong{color:var(--fg); font-weight:650}
-.fname .path,.file > h3 > .path,#current-file-path .path{display:flex; flex-direction:column-reverse; gap:2px}
-/* File icons are Nerd Font private-use glyphs: the patched font is already on
-   this machine, and --nerd falls back to the bundled code font if it is not. */
-.ficon{font-family:var(--nerd); font-size:13px; line-height:1; flex:none; color:var(--faint)}
-.ficon.add{color:var(--add-fg)} .ficon.del{color:var(--del-fg)}
-.ficon.mod{color:var(--accent)} .ficon.moved{color:#c792ea}
-.ficon{display:inline-block; line-height:1; transform:translateY(-1px)}
-.file > h3 .ficon{font-size:12px}
+#toolbar .hint{color:var(--faint); font-size:12.5px}
+#review-tabs{display:flex; gap:6px; margin-right:6px}
+#review-tabs [role="tab"]{font-size:13.5px; padding:6px 14px}
+#review-tabs [aria-selected="true"]{background:var(--fg); border-color:var(--fg); color:var(--surface)}
+.diff-view-controls{display:flex; gap:4px}
 
 /* ------------------------------------------------------------------ main */
-main{display:grid; grid-template-columns:264px minmax(0,1fr) 340px; min-height:0}
-body.comments-collapsed main{grid-template-columns:264px minmax(0,1fr)}
-body.document.comments-collapsed main{grid-template-columns:232px minmax(0,1fr)}
-aside{overflow:auto; min-height:0; background:var(--surface)}
-#files-panel{border-right:1px solid var(--line)}
-#threads-panel{border-left:1px solid var(--line)}
-.panel-head{
-  position:sticky; top:0; z-index:2; display:flex; align-items:center; justify-content:space-between;
-  gap:8px; padding:10px 12px; border-bottom:1px solid var(--line-soft);
-  background:var(--surface);
+main{display:grid; grid-template-columns:minmax(0,300px) minmax(0,1fr); gap:20px; min-height:0; padding:0 22px 12px}
+#sidebar{display:flex; flex-direction:column; gap:18px; min-height:0; overflow:auto; padding:2px 4px 12px 2px}
+#files-panel,#threads-panel{display:flex; flex-direction:column; gap:8px}
+.panel-head{display:flex; align-items:center; justify-content:space-between; gap:8px; min-height:26px}
+#review-pane{
+  display:flex; flex-direction:column; min-height:0; min-width:0; overflow:hidden;
+  background:var(--surface); border:1px solid var(--line); border-radius:10px;
 }
-#diff{overflow:auto; min-height:0; padding:14px 18px; scroll-behavior:smooth}
-#diff:focus-visible{outline:2px solid var(--accent); outline-offset:-2px}
+#diff{overflow:auto; min-height:0; flex:1; background:var(--code-bg); scroll-behavior:smooth}
+#diff:focus-visible{outline:3px solid var(--accent); outline-offset:-3px}
 #diff::after{content:""; display:block; height:45vh}
-#review-pane{display:flex; flex-direction:column; min-height:0; min-width:0}
-#review-pane #diff{flex:1}
-#current-file{display:flex; flex-wrap:wrap; gap:8px 12px; align-items:center; padding:10px 18px; border-bottom:1px solid var(--line); background:var(--raised)}
-#current-file-path{min-width:0; flex:1 1 180px; overflow:auto; white-space:nowrap; font:400 13px/1.5 var(--mono)}
-#current-file-position{flex:none; color:var(--muted); font-size:13px; font-variant-numeric:tabular-nums}
+#current-file{display:flex; flex-wrap:wrap; gap:6px 14px; align-items:center; padding:10px 16px; border-bottom:1px solid var(--line); background:var(--surface)}
+#current-file-path{min-width:0; flex:1 1 180px; overflow:auto; white-space:nowrap; font:700 13px/1.5 var(--mono)}
+#current-file-position{flex:none; color:var(--muted); font-size:12.5px; font-weight:700; font-variant-numeric:tabular-nums}
 #change-navigation{display:flex; flex-wrap:wrap; align-items:center; gap:6px}
-#change-position{color:var(--muted); font-size:13px; font-variant-numeric:tabular-nums}
+#change-position{color:var(--muted); font-size:12.5px; font-weight:700; font-variant-numeric:tabular-nums}
 body.document #current-file{display:none}
 
-/* ------------------------------------------------------------- file list */
-#files li{
-  padding:9px 12px; border-bottom:1px solid var(--line-soft); cursor:pointer;
-  display:flex; flex-direction:column; gap:3px; border-left:2px solid transparent;
+/* ------------------------------------------------------- file boxes (left) */
+.node{
+  font:inherit; color:var(--fg); text-align:left; cursor:pointer; white-space:normal;
+  background:var(--surface); border:1.5px solid var(--line); border-radius:8px;
+  padding:9px 12px; min-width:0; display:flex; flex-direction:column; gap:2px;
+  transition:border-color .12s,background .12s;
 }
-#files li:hover{background:var(--raised)}
-#files li.active{border-left-color:var(--accent); background:var(--accent-soft)}
-#files li .path{font-family:var(--mono); font-size:13px; word-break:break-all; line-height:1.5}
-#files li .counts{color:var(--muted); font-size:13px; display:flex; gap:6px; align-items:center; font-variant-numeric:tabular-nums}
-#files li .dot{width:7px; height:7px; border-radius:50%; background:var(--muted); flex:none}
-#files li .dot.add{background:var(--add-fg)} #files li .dot.del{background:var(--del-fg)}
-#files li .open{color:var(--warn-fg); font-weight:600}
+.node b{font-weight:800; font-size:14px; overflow-wrap:anywhere; display:flex; gap:8px; align-items:baseline; justify-content:space-between}
+.node .sub{font-size:12.5px; color:var(--muted); font-weight:600; overflow-wrap:anywhere}
+.node .stat{font-family:var(--mono); font-size:11.5px; font-weight:600; white-space:nowrap}
+.node .stat .p{color:var(--add-fg)} .node .stat .m{color:var(--del-fg)}
+.node:hover{border-color:var(--accent)}
+.node[aria-pressed="true"],#files li.node.active{background:var(--accent); border-color:var(--accent); color:var(--on-accent)}
+.node[aria-pressed="true"] .sub,.node[aria-pressed="true"] .stat .p,.node[aria-pressed="true"] .stat .m,.node[aria-pressed="true"] .ficon,
+#files li.node.active .sub,#files li.node.active .stat .p,#files li.node.active .stat .m,#files li.node.active .ficon{color:var(--on-accent); opacity:.9}
+.node.main{border-color:var(--accent); background:var(--accent-soft)}
+.node.main[aria-pressed="true"]{background:var(--accent)}
+.node .badge{font-size:11px; font-weight:800; padding:0 7px; border-radius:999px; background:var(--warn-bg); color:var(--warn-fg); align-self:flex-start; margin-top:2px}
+#files{display:flex; flex-direction:column; gap:8px}
+#files .fname{display:flex; align-items:baseline; gap:7px; min-width:0}
+#files .fname strong{font-weight:800}
+.path .directory{color:var(--muted); font-weight:600}
+.path strong{font-weight:800}
+#current-file-path .path,.file > h3 > .path{display:inline}
+/* File icons are Nerd Font private-use glyphs: the patched font is already on
+   this machine, and --nerd falls back to the bundled code font if it is not. */
+.ficon{font-family:var(--nerd); font-size:13px; line-height:1; flex:none; color:var(--faint); display:inline-block; transform:translateY(-1px)}
+.ficon.add{color:var(--add-fg)} .ficon.del{color:var(--del-fg)}
+.ficon.mod{color:var(--accent)} .ficon.moved{color:var(--tok-kw)}
+.empty{padding:14px 4px; color:var(--faint); font-size:13.5px; line-height:1.55}
 
-/* ----------------------------------------------------------------- files */
-.file{
-  margin:0 0 16px; border:1px solid var(--line); border-radius:var(--r-md);
-  overflow:visible; background:var(--surface); box-shadow:0 1px 2px rgba(0,0,0,.18);
-}
+/* -------------------------------------------------- guided flow (left) */
+#guide-flow{display:flex; flex-direction:column; gap:0}
+.arrow{position:relative; display:flex; align-items:center; gap:10px; padding-left:24px; height:24px; color:var(--muted); font-size:12px; font-weight:700}
+.arrow::before{content:""; width:2px; height:100%; background:var(--line); flex:none}
+.arrow .tip{position:absolute; left:20px; bottom:0; width:0; height:0; border:5px solid transparent; border-top:7px solid var(--muted); border-bottom:0}
+.node .count{font-family:var(--mono); font-size:11.5px; font-weight:600; white-space:nowrap; opacity:.85}
+.node.filtered{opacity:.55}
+
+/* ----------------------------------------------------------- diff (right) */
+.file{margin:0; border-bottom:1px solid var(--line); background:var(--code-bg)}
 .file > h3{
-  margin:0; padding:9px 12px; display:flex; gap:9px;
-  align-items:center; flex-wrap:wrap; background:var(--raised);
-  border-bottom:1px solid var(--line); border-radius:var(--r-md) var(--r-md) 0 0; font:600 13px/1.5 var(--mono);
+  margin:0; padding:9px 16px; display:flex; gap:9px; align-items:center; flex-wrap:wrap;
+  background:var(--surface); border-bottom:1px solid var(--line-soft); font:700 12.5px/1.5 var(--mono);
 }
-.file > h3 .counts{margin-left:auto; color:var(--muted); font:13px/1.5 var(--sans); font-variant-numeric:tabular-nums}
+.file > h3 .counts{margin-left:auto; color:var(--muted); font:700 12px/1.5 var(--mono); font-variant-numeric:tabular-nums}
 .file > h3 > span{overflow-wrap:anywhere; min-width:0}
 .badge{
-  font:600 13px/1.7 var(--sans); text-transform:uppercase; letter-spacing:.06em;
-  padding:0 7px; border-radius:999px; border:1px solid var(--line); color:var(--muted);
+  font:800 11px/1.7 var(--font); text-transform:uppercase; letter-spacing:.06em;
+  padding:0 8px; border-radius:999px; background:var(--accent-soft); color:var(--accent);
 }
-.badge.add{color:var(--add-fg); border-color:var(--add-line); background:var(--add-bg)}
-.badge.del{color:var(--del-fg); border-color:var(--del-line); background:var(--del-bg)}
-.rows{display:grid; grid-template-columns:minmax(0,1fr); font:400 15px/26px var(--mono); font-variant-numeric:tabular-nums}
+.badge.add{color:var(--add-fg); background:var(--add-bg)}
+.badge.del{color:var(--del-fg); background:var(--del-bg)}
+.rows{display:grid; grid-template-columns:minmax(0,1fr); font:400 13px/22px var(--mono); font-variant-numeric:tabular-nums; padding:4px 0 10px}
 .row{
-  display:grid; grid-template-columns:52px 52px 18px minmax(0,1fr);
-  border-left:2px solid transparent; scroll-margin-top:44px;
+  display:grid; grid-template-columns:48px 48px 20px minmax(0,1fr);
+  border-left:3px solid transparent; scroll-margin-top:44px;
 }
 .row .ln{
-  color:var(--faint); text-align:right; padding:0 8px; user-select:none;
-  font-size:13px; cursor:pointer; font-variant-numeric:tabular-nums;
+  color:var(--tok-com); text-align:right; padding:0 8px; user-select:none;
+  font-size:12px; cursor:pointer; font-variant-numeric:tabular-nums;
 }
 .row .ln:hover{color:var(--accent)}
-.row .sign{text-align:center; user-select:none; color:var(--faint)}
-.row .code{overflow-wrap:anywhere; white-space:pre-wrap; padding-right:14px}
-.row.add{background:var(--add-bg); border-left-color:var(--add-line)}
-.row.add .code,.row.add .sign{color:var(--add-fg)}
-.row.remove{background:var(--del-bg); border-left-color:var(--del-line)}
-.row.remove .code,.row.remove .sign{color:var(--del-fg)}
-.row.meta{background:var(--sunken); color:var(--muted); font-size:13px}
-.row.meta .code{padding:3px 10px; font-style:italic}
-.row.sel{background:var(--accent-soft); border-left-color:var(--accent)}
-.row.sel .code,.row.sel .sign,.row.sel .ln{color:var(--fg)}
-.row.threaded .ln::after{content:""; display:inline-block; width:5px; height:5px; border-radius:50%;
+.row .sign{text-align:center; user-select:none; color:var(--muted)}
+.row .code{overflow-wrap:anywhere; white-space:pre-wrap; padding-right:16px; color:var(--fg)}
+.row[data-row]{cursor:pointer}
+.row[data-row]:hover{background:var(--accent-soft)}
+.row.add{background:var(--add-bg); border-left-color:var(--add-edge)}
+.row.add .sign{color:var(--add-fg)}
+.row.remove{background:var(--del-bg); border-left-color:var(--del-edge)}
+.row.remove .sign{color:var(--del-fg)}
+.row.meta{background:var(--bg); color:var(--muted); font-size:11.5px; border-block:1px solid var(--line-soft); cursor:default}
+.row.meta:hover{background:var(--bg)}
+.row.meta .code{padding:3px 16px; color:var(--muted)}
+.row.sel,.row.sel:hover{background:var(--accent-soft); border-left-color:var(--accent)}
+.row.sel .ln{color:var(--fg)}
+.row.threaded .ln::after{content:""; display:inline-block; width:6px; height:6px; border-radius:50%;
   background:var(--warn-fg); margin-left:5px; vertical-align:middle}
 .row.threaded.resolved-thread .ln::after{background:var(--accent)}
 .row.flash{animation:flash .9s ease}
-.diff-view-controls{display:flex; gap:3px}
-.diff-view-controls button[aria-pressed="true"]{background:var(--accent-soft); border-color:var(--accent); color:var(--fg)}
 .file.split .rows{grid-template-columns:repeat(2,minmax(0,1fr)); min-width:560px}
 .split-row,.split-labels{display:contents}
 .file.split .rows > .row{grid-column:1 / -1}
-.split-row > .row{grid-template-columns:52px 18px minmax(0,1fr)}
-.split-row > .row:first-child{border-right:1px solid var(--line)}
-.split-row > .blank{background:var(--sunken); min-height:26px}
-.split-labels span{position:sticky; top:0; z-index:2; padding:6px 12px; background:var(--raised); color:var(--muted); font:600 13px/1.5 var(--sans)}
+.split-row > .row{grid-template-columns:48px 20px minmax(0,1fr)}
+.split-row > .row:first-child{border-right:1px solid var(--line-soft)}
+.split-row > .blank{background:var(--sunken); min-height:22px}
+.split-labels span{position:sticky; top:0; z-index:2; padding:5px 16px; background:var(--surface); color:var(--muted); font:800 11.5px/1.5 var(--font); text-transform:uppercase; letter-spacing:.08em; border-bottom:1px solid var(--line-soft)}
 .file.nowrap{min-width:max-content}
 .file.nowrap .rows{grid-template-columns:minmax(max-content,1fr)}
 .file.split.nowrap .rows{grid-template-columns:repeat(2,minmax(max-content,1fr))}
 .file.nowrap .code{white-space:pre; overflow-wrap:normal}
 .word-change{color:inherit; border-radius:2px}
-.row.add .word-change{background:var(--add-line)}
-.row.remove .word-change{background:var(--del-line)}
+.row.add .word-change{background:var(--add-edge)}
+.row.remove .word-change{background:var(--del-edge)}
 body.document .diff-view-controls,body.document #wrap-lines,body.document #review-tabs{display:none}
-#review-tabs{display:flex; gap:4px}
-#review-tabs [aria-selected="true"]{background:var(--accent-soft); border-color:var(--accent); color:var(--fg)}
-#review-pane{container-type:inline-size}
-.guide-overview{padding:20px; margin-bottom:24px; border:1px solid var(--line); border-radius:var(--r-md); background:var(--surface)}
-.guide-overview h2,.guide-context h2{font-size:18px; color:var(--fg); text-transform:none; letter-spacing:-.01em; margin:0 0 10px}
-.guide-overview p,.guide-context p{white-space:pre-wrap; overflow-wrap:anywhere; line-height:1.65}
-.guide-note{font-size:13px; color:var(--muted)}
-.guide-comparison{display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:14px; margin-top:18px}
-.guide-side{padding:14px; border:1px solid var(--line); border-radius:var(--r-sm); background:var(--sunken)}
-.guide-side h3{margin:0; font-size:14px}
-.guide-side.after{border-color:var(--add-line); background:var(--add-bg)}
-.guide-flow{display:flex; flex-wrap:wrap; gap:10px; padding:0; list-style:none}
-.guide-flow li{border:1px solid var(--line); border-radius:5px; padding:6px 9px; font:13px/1.5 var(--mono); overflow-wrap:anywhere}
-.guide-flow li:not(:last-child)::after{content:" →"; color:var(--muted)}
-.guide-chapter{display:grid; grid-template-columns:minmax(200px,1fr) minmax(0,2.3fr); gap:22px; margin-bottom:32px; scroll-margin-top:10px}
-.guide-context{position:sticky; top:0; align-self:start; padding:8px 0}
-.guide-context .guide-position{font:13px/1.5 var(--mono); color:var(--muted)}
-.guide-progress{display:flex; gap:7px; align-items:center; font-size:13px; color:var(--muted); margin:12px 0}
-.guide-progress input{width:auto}
-.guide-files{display:flex; flex-direction:column; gap:6px}
-.guide-files button{text-align:left; overflow-wrap:anywhere; white-space:normal; font:13px/1.5 var(--mono)}
-.guide-code{min-width:0}
-@container(max-width:900px){
-  .guide-chapter{grid-template-columns:minmax(0,1fr); gap:10px}
-  .guide-context{position:static}
-}
-@container(max-width:500px){.guide-comparison{grid-template-columns:minmax(0,1fr)}}
 @keyframes flash{from{background:var(--accent-soft)} to{background:transparent}}
 
-/* --------------------------------------------------------------- threads */
-.thread{padding:10px 12px; border-bottom:1px solid var(--line-soft); border-left:2px solid var(--warn-fg); cursor:pointer}
-.thread:hover{background:var(--raised)}
-.thread.resolved{opacity:.62; border-left-color:var(--accent)}
-.thread .where{font:13px/1.5 var(--mono); color:var(--muted); word-break:break-all}
-.thread .text{margin:5px 0 8px; white-space:pre-wrap; font-size:13.5px; line-height:1.55}
+/* -------------------------------------------- comment cards under lines */
+.thread-card{
+  grid-column:1 / -1; margin:4px 16px 10px 116px; max-width:62ch; cursor:default;
+  font-family:var(--font); white-space:normal; background:var(--surface);
+  border:1.5px solid var(--accent); border-radius:10px; padding:10px 12px;
+  display:flex; flex-direction:column; gap:6px;
+}
+.file.split .thread-card{margin-left:16px}
+.thread-card .who{font-size:12px; font-weight:800; color:var(--accent)}
+.thread-card .text{margin:0; font-size:14px; line-height:1.5; white-space:pre-wrap; overflow-wrap:anywhere; color:var(--fg)}
+.thread-card .acts{display:flex; gap:6px; justify-content:flex-end}
+.thread-card.resolved{border-color:var(--line)}
+.thread-card.resolved .who{color:var(--muted)}
+body.document .thread-card{margin:4px 0 14px}
+
+/* -------------------------------------------------- guided view (right) */
+.guide-overview{padding:18px 20px; border-bottom:1px solid var(--line); background:var(--surface); scroll-margin-top:0}
+.guide-overview h2,.guide-context h2{font-size:20px; font-weight:800; color:var(--fg); text-transform:none; letter-spacing:-.01em; margin:0 0 4px; text-wrap:balance}
+.guide-overview p,.guide-context p{white-space:pre-wrap; overflow-wrap:anywhere; line-height:1.6; margin:4px 0 0; max-width:75ch}
+.guide-note{display:inline-block; font-size:12.5px; font-weight:700; color:var(--warn-fg); background:var(--warn-bg); border-radius:999px; padding:1px 10px}
+.guide-comparison{display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:12px; margin-top:16px}
+.guide-side{padding:12px 14px; border:1px solid var(--line); border-radius:10px; background:var(--code-bg); min-width:0}
+.guide-side h3{margin:0; font-size:11.5px; font-weight:800; letter-spacing:.08em; text-transform:uppercase; color:var(--muted)}
+.guide-side.after{border-color:var(--add-edge); background:var(--add-bg)}
+.guide-side.after h3{color:var(--add-fg)}
+.guide-flow{display:flex; flex-wrap:wrap; gap:8px 26px; padding:0; margin:10px 0 0; list-style:none}
+.guide-flow li{position:relative; background:var(--surface); border:1.5px solid var(--line); border-radius:8px; padding:3px 10px; font-size:12.5px; font-weight:700; overflow-wrap:anywhere}
+.guide-flow li + li::before{content:"\2192"; position:absolute; left:-19px; top:50%; transform:translateY(-50%); color:var(--muted); font-weight:800}
+.guide-chapter{border-bottom:1px solid var(--line); scroll-margin-top:0}
+.guide-context{padding:16px 20px 14px; background:var(--surface); border-bottom:1px solid var(--line-soft)}
+.guide-context .guide-position{font-size:11.5px; font-weight:800; letter-spacing:.08em; text-transform:uppercase; color:var(--accent); margin:0 0 2px}
+.guide-context > p:not(.guide-position){color:var(--muted)}
+.guide-progress{display:flex; gap:7px; align-items:center; font-size:13px; font-weight:700; color:var(--muted); margin:10px 0 8px; width:fit-content}
+.guide-progress input{width:auto; accent-color:var(--accent)}
+.guide-files{display:flex; flex-wrap:wrap; gap:6px}
+.guide-files button{text-align:left; overflow-wrap:anywhere; white-space:normal; font:600 12px/1.5 var(--mono); border-color:var(--line); color:var(--fg)}
+.guide-code{min-width:0}
+.guide-code > .file:last-child{border-bottom:0}
+
+/* ----------------------------------------------- comment list (sidebar) */
+.thread{padding:9px 12px; background:var(--surface); border:1.5px solid var(--line); border-left:4px solid var(--warn-fg); border-radius:8px; cursor:pointer; margin-bottom:8px}
+.thread:hover{border-color:var(--accent); border-left-color:var(--warn-fg)}
+.thread.resolved{opacity:.7; border-left-color:var(--accent)}
+.thread .where{font:12px/1.5 var(--mono); color:var(--muted); word-break:break-all}
+.thread .text{margin:4px 0 8px; white-space:pre-wrap; font-size:13.5px; line-height:1.5; overflow-wrap:anywhere}
 .thread .acts{display:flex; gap:6px; align-items:center}
-.group{padding:9px 12px 4px; font-size:13px; text-transform:uppercase; letter-spacing:.08em; color:var(--faint); font-weight:600}
-.empty{padding:14px 12px; color:var(--faint); font-size:13.5px; line-height:1.55}
+#threads .group{padding:4px 2px 6px; font-size:11.5px; text-transform:uppercase; letter-spacing:.08em; color:var(--muted); font-weight:800}
+#threads .empty{background:var(--surface); border:1px dashed var(--line); border-radius:10px; padding:12px}
 
 /* -------------------------------------------------------------- composer */
 #composer{
-  position:fixed; left:50%; bottom:132px; transform:translateX(-50%); width:min(680px,92vw);
-  background:var(--raised); border:1px solid var(--accent); border-radius:var(--r-lg);
-  padding:12px; box-shadow:var(--shadow); z-index:20;
+  position:fixed; left:50%; bottom:132px; transform:translateX(-50%); width:min(640px,92vw);
+  background:var(--surface); border:1.5px solid var(--accent); border-radius:10px;
+  padding:12px; box-shadow:var(--shadow); z-index:20; display:flex; flex-direction:column; gap:8px;
 }
-#composer .where{font:13px/1.5 var(--mono); color:var(--muted); margin-bottom:7px; word-break:break-all}
-#composer .acts{display:flex; gap:8px; justify-content:flex-end; margin-top:9px}
+#composer .where{font:800 12px/1.5 var(--font); color:var(--accent); word-break:break-all}
+#composer .acts{display:flex; gap:6px; justify-content:flex-end}
 
-/* ---------------------------------------------------------------- footer */
+/* ---------------------------------------------------- decision bar footer */
 footer{
-  border-top:1px solid var(--line); background:var(--surface); padding:10px 18px 12px;
-  display:grid; grid-template-columns:minmax(260px,1fr) auto; gap:10px 18px; align-items:end;
+  margin:0 22px 14px; background:var(--surface); border:1px solid var(--line); border-radius:10px;
+  padding:10px 16px; display:grid; grid-template-columns:minmax(220px,1fr) auto; gap:8px 18px; align-items:end;
 }
-footer label{display:block; color:var(--muted); font-size:13px; text-transform:uppercase;
-  letter-spacing:.07em; font-weight:600; margin-bottom:5px}
+footer label{display:block; color:var(--muted); font-size:11.5px; text-transform:uppercase;
+  letter-spacing:.08em; font-weight:800; margin-bottom:4px}
+footer textarea{min-height:38px}
 footer .actions{display:flex; gap:8px; align-items:center; flex-wrap:wrap; justify-content:flex-end}
-#counts{color:var(--muted); font-size:13px; margin-right:6px; font-variant-numeric:tabular-nums}
+#counts{color:var(--muted); font-size:13px; font-weight:700; margin-right:6px; font-variant-numeric:tabular-nums}
 #message{grid-column:1 / -1; min-height:18px; font-size:13.5px; color:var(--muted)}
-#message.warn{color:var(--warn-fg)} #message.error{color:var(--danger); font-weight:600}
-kbd{
-  font:13px/1.6 var(--mono); border:1px solid var(--line); border-bottom-width:2px;
-  border-radius:4px; padding:0 4px; margin-left:6px; opacity:.7; color:var(--muted);
-}
-button.primary kbd{opacity:.85}
+#message:empty{min-height:0}
+#message.warn{color:var(--warn-fg)} #message.error{color:var(--del-fg); font-weight:700}
 #banner{
-  grid-column:1 / -1; background:var(--warn-bg); color:var(--warn-fg); border:1px solid var(--warn-fg);
-  border-radius:var(--r-sm); padding:6px 10px; font-size:13px;
+  margin-top:8px; background:var(--warn-bg); color:var(--warn-fg);
+  border-radius:8px; padding:6px 10px; font-size:13px; font-weight:700;
   display:flex; gap:12px; align-items:center; justify-content:space-between;
 }
+#banner button{background:var(--surface)}
 
 /* -------------------------------------------------------- dialog/overlay */
-#backdrop{position:fixed; inset:0; background:rgba(4,6,10,.62); display:flex; align-items:center;
-  justify-content:center; z-index:30; padding:24px; backdrop-filter:blur(2px)}
-#dialog{
-  background:var(--raised); border:1px solid var(--line); border-radius:var(--r-lg); padding:18px;
+#backdrop{position:fixed; inset:0; background:var(--scrim); display:flex; align-items:center;
+  justify-content:center; z-index:30; padding:24px}
+#dialog,#help .card{
+  background:var(--surface); border:1px solid var(--line); border-radius:12px; padding:20px;
   max-width:520px; width:100%; box-shadow:var(--shadow);
 }
-#dialog h2{color:var(--fg); font-size:15px; text-transform:none; letter-spacing:0; font-weight:650}
+#dialog h2,#help h2{color:var(--fg); font-size:17px; text-transform:none; letter-spacing:0; font-weight:800}
 #dialog .body{margin:8px 0 16px; color:var(--muted); white-space:pre-wrap; line-height:1.55}
-#dialog .acts{display:flex; gap:8px; justify-content:flex-end}
+#dialog .acts{display:flex; gap:8px; justify-content:flex-end; flex-wrap:wrap}
 #overlay{
   position:fixed; inset:0; background:var(--bg); z-index:40; display:flex;
-  align-items:center; justify-content:center; font-size:15px; color:var(--muted);
+  align-items:center; justify-content:center; font-size:17px; font-weight:800; color:var(--fg); padding:24px; text-align:center;
 }
 #help{
-  position:fixed; inset:0; background:rgba(4,6,10,.72); z-index:35; display:flex;
-  align-items:center; justify-content:center; padding:24px; backdrop-filter:blur(2px);
+  position:fixed; inset:0; background:var(--scrim); z-index:35; display:flex;
+  align-items:center; justify-content:center; padding:24px;
 }
-#help .card{background:var(--raised); border:1px solid var(--line); border-radius:var(--r-lg);
-  padding:20px 24px; box-shadow:var(--shadow); min-width:380px}
-#help h2{color:var(--fg); font-size:15px; text-transform:none; letter-spacing:0; margin-bottom:12px}
-#help table{border-collapse:collapse; font-size:13px}
-#help td{padding:4px 0} #help td:first-child{width:110px}
+#help .card{max-width:560px; max-height:100%; overflow:auto}
+#help h2{margin-bottom:12px}
+#help table{border-collapse:collapse; font-size:13.5px}
+#help td{padding:5px 0; vertical-align:top} #help td:first-child{width:120px; white-space:nowrap}
 #help kbd{margin:0}
+
 /* ---------------------------------------------------------- document mode */
 /* A specification renders as blocks, not as numbered lines: a heading looks
    like a heading, a paragraph is a paragraph. Each block still carries the
    source range it came from, which is what a comment names. */
-body.document main{grid-template-columns:232px minmax(0,1fr) 340px}
 body.document #files-panel{display:none}
 body.document #chip-files,body.document #chip-add,body.document #chip-del{display:none}
 body.document #file-filter,body.document #expand-all,body.document #collapse-all{display:none}
-body.document .blk{position:relative; border-left:2px solid transparent; scroll-margin-top:70px}
-body.document .blk:hover{background:var(--raised)}
+body.document #diff{background:var(--surface); padding:26px 32px 26px 70px}
+body.document #diff > *{max-width:74ch}
+body.document .md{overflow-wrap:anywhere}
+body.document .blk{position:relative; border-left:3px solid transparent; border-radius:6px;
+  padding:2px 10px; margin-left:-13px; scroll-margin-top:70px; cursor:pointer}
+body.document .blk:hover{background:var(--accent-soft)}
 body.document .blk.sel{background:var(--accent-soft); border-left-color:var(--accent)}
-body.document .blk.threaded{border-left-color:var(--warn-fg)}
-body.document .blk.threaded.resolved-thread{border-left-color:var(--accent)}
+body.document .blk.threaded{background:var(--warn-bg); border-left-color:var(--warn-fg)}
+body.document .blk.threaded.resolved-thread{background:transparent; border-left-color:var(--accent)}
 body.document .blk.flash{animation:flash .9s ease}
+body.document .blk.blank,body.document .blk.rule{cursor:default}
+body.document .blk.blank:hover,body.document .blk.rule:hover{background:none}
 body.document .at{
-  position:absolute; left:-46px; width:40px; text-align:right; color:var(--faint);
-  font:13px/1.7 var(--mono); user-select:none; cursor:pointer; opacity:0;
-  transition:opacity .12s ease;
+  position:absolute; left:-46px; top:4px; width:34px; text-align:right; color:var(--tok-com);
+  font:11px/1.7 var(--mono); user-select:none; cursor:pointer;
 }
-body.document .blk:hover .at,body.document .blk.sel .at,body.document .blk.threaded .at{opacity:1}
-body.document .blk.h1 .bd{font-family:var(--sans); font-size:27px; font-weight:700; color:var(--accent); line-height:1.28; margin:30px 0 8px; letter-spacing:-.02em}
-body.document .blk.h2 .bd{font-family:var(--sans); font-size:20.5px; font-weight:650; margin:28px 0 6px; letter-spacing:-.015em}
+body.document .blk.blank .at,body.document .blk.rule .at{display:none}
+body.document .blk:hover .at,body.document .blk.sel .at{color:var(--accent)}
+body.document .blk.h1 .bd{font-size:26px; font-weight:800; line-height:1.25; margin:22px 0 6px; letter-spacing:-.01em; text-wrap:balance}
+body.document .blk.h2 .bd{font-size:20px; font-weight:800; margin:20px 0 4px; letter-spacing:-.01em}
 body.document .blk.h3 .bd,body.document .blk.h4 .bd,body.document .blk.h5 .bd,body.document .blk.h6 .bd{
-  font-size:14px; font-weight:700; margin:16px 0 3px; text-transform:uppercase; letter-spacing:.05em; color:var(--muted)}
-body.document .blk.p .bd{
-  margin:0 0 1.1em; color:var(--fg);
-  font-family:var(--serif); font-size:18px; line-height:1.72;
-  font-variant-numeric:oldstyle-nums proportional-nums;
-}
+  font-size:16px; font-weight:800; margin:14px 0 2px}
+body.document .blk.h1:first-child .bd{margin-top:0}
+body.document .blk.p .bd{margin:0 0 .5em; color:var(--fg); font-size:16px; line-height:1.7}
 body.document .md > :first-child{margin-top:0}
 body.document .md > :last-child{margin-bottom:0}
-body.document .md p{margin:0 0 1.05em}
+body.document .md p{margin:0 0 .8em}
 body.document .md h1,body.document .md h2,body.document .md h3,
-body.document .md h4,body.document .md h5,body.document .md h6{
-  font-family:var(--sans); margin:1.5em 0 .5em; line-height:1.3; letter-spacing:-.012em}
-body.document .md h1{font-size:1.6em} body.document .md h2{font-size:1.28em}
-body.document .md h3{font-size:1.18em}
-body.document .md ul,body.document .md ol{margin:.4em 0 1.05em; padding-left:1.5em}
-body.document .md li{margin:.2em 0}
-body.document .md li::marker{color:var(--faint)}
+body.document .md h4,body.document .md h5,body.document .md h6{font-weight:800; margin:0; line-height:1.3;
+  text-transform:none; letter-spacing:inherit; color:inherit}
+body.document .md h1{font-size:1em} body.document .md h2{font-size:1em} body.document .md h3{font-size:1em}
+body.document .md ul,body.document .md ol{margin:.2em 0 .8em; padding-left:1.4em}
+body.document .md ol{list-style:decimal}
+body.document .md li{margin:.15em 0}
+body.document .md li::marker{color:var(--accent)}
 body.document .md blockquote{
-  margin:.8em 0; padding:.2em 0 .2em 1.1em; border-left:2px solid var(--line); color:var(--muted)}
-body.document .md hr{border:0; border-top:1px solid var(--line); margin:1.6em 0}
-body.document .md a{color:var(--accent); text-decoration-color:color-mix(in srgb,var(--accent) 45%,transparent);
-  text-underline-offset:2px}
-body.document .md strong{font-weight:650}
-body.document .md table{
-  margin:.6em 0 1.2em; border-collapse:collapse; font-family:var(--sans); font-size:14.5px; width:100%}
+  margin:.6em 0; padding:.2em 0 .2em 1em; border-left:3px solid var(--accent-soft); color:var(--muted)}
+body.document .md hr{border:0; border-top:1px solid var(--line); margin:1.2em 0}
+body.document .md a{color:var(--accent); text-underline-offset:2px}
+body.document .md strong{font-weight:800}
+body.document .md table{margin:.4em 0 1em; border-collapse:collapse; font-size:14px; width:100%}
 body.document .md th,body.document .md td{border:1px solid var(--line); padding:6px 10px; text-align:left; vertical-align:top}
-body.document .md th{background:var(--raised); font-weight:600; color:var(--muted)}
-body.document .md tbody tr:nth-child(even) td{background:var(--sunken)}
-body.document .md code{font-family:var(--mono); font-size:.9em; font-weight:400; background:var(--sunken);
-  padding:.12em .38em; border-radius:4px; border:1px solid var(--line-soft)}
-body.document .md pre{background:var(--sunken); border:1px solid var(--line); border-radius:8px}
-body.document .md pre code{background:none; border:0; padding:0; font-size:15px; line-height:26px; font-weight:400; letter-spacing:0}
-body.document .blk.blank{height:10px}
-body.document .blk.rule .bd{color:var(--line); letter-spacing:.2em}
-body.document .blk.q .bd{border-left:2px solid var(--line); padding:2px 0 2px 14px; color:var(--muted); font-style:italic}
-body.document .blk.li .bd{font-family:var(--serif); font-size:17.5px; margin:0 0 3px; padding-left:20px; position:relative; line-height:1.6}
-body.document .blk.li .bd::before{content:"•"; position:absolute; left:2px; color:var(--faint)}
-body.document .blk.li.task .bd::before{content:"☐"; color:var(--muted)}
-body.document .blk.li.task.done .bd::before{content:"☑"; color:var(--add-fg)}
-body.document .blk.tb .bd{margin:0 0 16px; border-collapse:collapse; font-size:12.5px; width:100%}
+body.document .md th{background:var(--raised); font-weight:800; color:var(--muted)}
+body.document .md code{font-family:var(--mono); font-size:.88em; background:var(--raised);
+  padding:.1em .38em; border-radius:4px}
+body.document .md pre{background:var(--code-bg); border:1px solid var(--line); border-radius:8px}
+body.document .md pre code{background:none; padding:0; font-size:13px; line-height:22px}
+body.document .blk.blank{height:8px; padding:0}
+body.document .blk.rule .bd{color:var(--line)}
+body.document .blk.li .bd{font-size:16px; margin:0 0 3px; padding-left:20px; position:relative; line-height:1.6}
+body.document .blk.li .bd::before{content:"\2022"; position:absolute; left:4px; color:var(--accent)}
+body.document .blk.li.task .bd::before{content:none}
+body.document .md .task-list-item-checkbox{margin:0 8px 0 0; accent-color:var(--add-fg)}
+body.document .blk.tb .bd{margin:0 0 14px; border-collapse:collapse; font-size:13px; width:100%}
 body.document .blk.tb .bd td{border:1px solid var(--line); padding:5px 9px; vertical-align:top}
-body.document .blk.tb .bd tr:first-child td{background:var(--raised); font-weight:600; color:var(--muted)}
-body.document .blk.tb .bd tr:nth-child(even):not(:first-child) td{background:var(--sunken)}
-body.document .blk.code{margin:0 0 16px}
-body.document .blk.code pre{margin:0; padding:12px 14px; background:var(--sunken); border:1px solid var(--line);
-  border-radius:var(--r-sm); overflow-x:auto; font:400 15px/26px var(--mono);
-  letter-spacing:.005em; white-space:pre}
-body.document .blk.code .lang{display:inline-block; margin-bottom:4px; font:13px/1.6 var(--sans);
+body.document .blk.tb .bd tr:first-child td{background:var(--raised); font-weight:800; color:var(--muted)}
+body.document .blk.code{margin:0 0 12px}
+body.document .blk.code pre{margin:0; padding:12px 14px; background:var(--code-bg); border:1px solid var(--line);
+  border-radius:8px; overflow-x:auto; font:400 13px/22px var(--mono); white-space:pre}
+body.document .blk.code .lang{display:inline-block; margin-bottom:4px; font:800 11px/1.6 var(--font);
   text-transform:uppercase; letter-spacing:.08em; color:var(--faint)}
-body.document .doc code{font-family:var(--mono); font-size:.9em; background:var(--sunken); padding:1px 5px;
-  border-radius:4px; color:var(--fg)}
-body.document .doc b{font-weight:700} body.document .doc i{font-style:italic} body.document .doc s{opacity:.7}
-.diagram{margin:0 0 16px; padding:14px; background:var(--sunken); border:1px solid var(--line);
+body.document .doc code{font-family:var(--mono); font-size:.88em; background:var(--raised); padding:1px 5px; border-radius:4px}
+body.document .doc b{font-weight:800} body.document .doc i{font-style:italic} body.document .doc s{opacity:.7}
+.diagram{margin:0 0 14px; padding:14px; background:var(--code-bg); border:1px solid var(--line);
   border-radius:8px; overflow-x:auto; text-align:center}
 .diagram.drawn svg{max-width:100%; height:auto}
 .diagram.undrawn{white-space:pre; text-align:left; font-family:var(--mono); font-size:12.5px; color:var(--muted)}
-.docpath{font-family:var(--mono); font-size:13px; color:var(--muted); margin-top:6px; word-break:break-all}
 /* the outline: every heading, with the one you are reading marked */
-#outline{padding:10px 8px 20px; border-right:1px solid var(--line); background:var(--surface); overflow:auto; min-height:0}
-#outline .group{padding:6px 8px 3px}
-#outline a{display:block; padding:5px 8px; border-radius:5px; color:var(--muted); text-decoration:none;
-  font-size:13.5px; line-height:1.4; overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
-#outline a:hover{background:var(--raised); color:var(--fg)}
-#outline a.lv1{font-weight:700; color:var(--fg)}
-#outline a.lv2{padding-left:16px} #outline a.lv3{padding-left:26px; font-size:13px}
-#outline a.lv4,#outline a.lv5,#outline a.lv6{padding-left:36px; font-size:13px; color:var(--faint)}
+#outline{display:flex; flex-direction:column; gap:2px}
+#outline .group{font-size:11.5px; font-weight:800; letter-spacing:.08em; text-transform:uppercase; color:var(--muted); padding:0 0 8px}
+#outline a{display:block; padding:4px 10px; border-radius:6px; color:var(--fg); text-decoration:none;
+  font-size:14px; font-weight:700; line-height:1.4; overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
+#outline a:hover{background:var(--raised)}
+#outline a.lv3,#outline a.lv4,#outline a.lv5,#outline a.lv6{padding-left:22px; font-weight:600; color:var(--muted)}
+#outline a.lv4,#outline a.lv5,#outline a.lv6{padding-left:34px; font-size:13px}
 #outline a.here{background:var(--accent-soft); color:var(--accent)}
-/* Code tokens. One palette, for the engine the page actually uses, tuned to
-   the same dark background as the diff so highlighted and plain code sit
-   together without a seam. */
-.hljs-comment,.hljs-quote{color:#8b96a8; font-style:italic}
-.hljs-keyword,.hljs-selector-tag,.hljs-literal,.hljs-doctag{color:#c792ea}
-.hljs-string,.hljs-regexp,.hljs-addition{color:#a5d6a7}
-.hljs-number,.hljs-symbol,.hljs-bullet{color:#f0b072}
-.hljs-title,.hljs-title.class_,.hljs-title.function_,.hljs-section{color:#82aaff}
-.hljs-type,.hljs-class .hljs-title,.hljs-built_in,.hljs-params{color:#ffcb6b}
-.hljs-variable,.hljs-template-variable,.hljs-attribute,.hljs-attr,.hljs-property{color:#e6edf3}
-.hljs-meta,.hljs-punctuation,.hljs-operator{color:#9aa7bd}
-.hljs-name,.hljs-tag{color:#ff7b72}
-.hljs-emphasis{font-style:italic} .hljs-strong{font-weight:600}
+/* Code tokens: one palette for the engine the page uses, drawn from the
+   page's own tokens so highlighted and plain code follow the theme. */
+.hljs-comment,.hljs-quote{color:var(--tok-com); font-style:italic}
+.hljs-keyword,.hljs-selector-tag,.hljs-literal,.hljs-doctag{color:var(--tok-kw); font-weight:600}
+.hljs-string,.hljs-regexp,.hljs-addition{color:var(--tok-str)}
+.hljs-number,.hljs-symbol,.hljs-bullet{color:var(--tok-num)}
+.hljs-title,.hljs-title.class_,.hljs-title.function_,.hljs-section{color:var(--tok-title)}
+.hljs-type,.hljs-class .hljs-title,.hljs-built_in,.hljs-params{color:var(--tok-type)}
+.hljs-variable,.hljs-template-variable,.hljs-attribute,.hljs-attr,.hljs-property{color:var(--fg)}
+.hljs-meta,.hljs-punctuation,.hljs-operator{color:var(--muted)}
+.hljs-name,.hljs-tag{color:var(--tok-tag)}
+.hljs-emphasis{font-style:italic} .hljs-strong{font-weight:700}
 .hljs-link{text-decoration:underline}
 @media(max-width:1100px){
-  main,body.document main{grid-template-columns:minmax(120px,19%) minmax(0,1fr) minmax(160px,23%)}
-  body.comments-collapsed main,body.document.comments-collapsed main{grid-template-columns:minmax(120px,19%) minmax(0,1fr)}
-  #toolbar{flex-wrap:wrap}
+  main{grid-template-columns:minmax(0,240px) minmax(0,1fr); gap:16px}
   #toolbar .hint{display:none}
   footer{grid-template-columns:minmax(0,1fr)}
+}
+@media(max-width:860px){
+  .guide-comparison{grid-template-columns:minmax(0,1fr)}
+}
+/* On a phone the page scrolls as one document instead of as fixed panes. */
+@media(max-width:760px){
+  html,body{height:auto}
+  body{display:block; overflow:visible}
+  header{max-height:none; padding:14px 16px 8px}
+  #toolbar{padding:4px 16px 10px}
+  #toolbar input{max-width:none; flex:1 1 100%}
+  main{display:flex; flex-direction:column; gap:14px; padding:0 16px 12px}
+  #sidebar{overflow:visible; padding:0}
+  #files,#guide-flow{max-height:40vh; overflow:auto; padding:2px}
+  #review-pane{overflow:visible}
+  #diff{overflow:visible; flex:none}
+  #diff::after{display:none}
+  .row{grid-template-columns:36px 36px 16px minmax(0,1fr)}
+  .split-row > .row{grid-template-columns:36px 16px minmax(0,1fr)}
+  .row .ln{padding:0 4px; font-size:11px}
+  .thread-card{margin-left:12px; margin-right:12px}
+  body.document #diff{padding:20px 16px 20px 48px}
+  body.document .at{left:-38px; width:28px}
+  footer{position:sticky; bottom:0; margin:0; border-radius:10px 10px 0 0; border-bottom:0; padding:10px 16px; z-index:10}
+  footer .actions{justify-content:flex-start}
+  #counts{flex:1 1 100%}
+  #composer{bottom:auto; top:16px}
 }
 [hidden]{display:none !important}
 </style>
 </head>
 <body>
 <header>
-  <div class="top">
-    <div class="title">
-      <h1 id="review-title">Review changes</h1>
+  <div class="rhead">
+    <div class="what">
+      <h1 id="review-title">Diff review</h1>
+      <p id="task-summary"></p>
+      <div class="where-line"><ul id="repos"></ul><code id="review-id"></code></div>
+    </div>
+    <div class="side">
       <div class="chips">
         <span class="chip" id="chip-files"></span>
         <span class="chip add" id="chip-add"></span>
         <span class="chip del" id="chip-del"></span>
+        <span class="chip warn" id="chip-comments" hidden></span>
       </div>
+      <button id="help-open" class="tiny ghost" title="Keyboard shortcuts">? shortcuts</button>
     </div>
-    <button id="help-open" class="tiny ghost" title="Keyboard shortcuts">? shortcuts</button>
   </div>
-  <p id="task-summary"></p>
-  <div class="meta"><code id="review-id"></code></div>
-  <ul id="repos"></ul>
   <details id="review-brief">
     <summary>Review brief</summary>
     <div id="criterion"></div>
@@ -469,8 +518,8 @@ body.document .doc b{font-weight:700} body.document .doc i{font-style:italic} bo
 </header>
 <div id="toolbar">
   <div id="review-tabs" role="tablist" aria-label="Review view">
-    <button id="tab-diff" class="tiny" role="tab" aria-selected="true" aria-controls="diff">Diff</button>
-    <button id="tab-guided" class="tiny" role="tab" aria-selected="false" aria-controls="diff" tabindex="-1">Guided</button>
+    <button id="tab-diff" role="tab" aria-selected="true" aria-controls="diff">Diff</button>
+    <button id="tab-guided" role="tab" aria-selected="false" aria-controls="diff" tabindex="-1">Guided</button>
   </div>
   <input id="file-filter" type="search" placeholder="Filter files&hellip;" aria-label="Filter files by path" spellcheck="false">
   <button id="expand-all" class="tiny">Expand all</button>
@@ -485,11 +534,24 @@ body.document .doc b{font-weight:700} body.document .doc i{font-style:italic} bo
   <span class="hint">Click a line or drag a range to comment &middot; <kbd>?</kbd> for shortcuts</span>
 </div>
 <main>
-  <nav id="outline" hidden></nav>
-  <aside id="files-panel">
-    <div class="panel-head"><h2>Files</h2><span class="chip" id="file-total"></span></div>
-    <ul id="files"></ul>
-  </aside>
+  <div id="sidebar">
+    <nav id="outline" aria-label="Outline" hidden></nav>
+    <aside id="files-panel">
+      <div class="panel-head"><h2 id="sidebar-title">Files</h2><span class="chip" id="file-total"></span></div>
+      <ul id="files"></ul>
+      <div id="guide-flow" role="group" aria-label="Guide chapters" hidden></div>
+    </aside>
+    <aside id="threads-panel">
+      <div class="panel-head">
+        <h2>Comments</h2>
+        <span>
+          <button id="next-thread" class="tiny ghost" title="Jump to the next comment (N)">Next</button>
+          <button id="discard" class="tiny ghost" hidden>Discard all</button>
+        </span>
+      </div>
+      <ul id="threads"></ul>
+    </aside>
+  </div>
   <section id="review-pane" aria-label="Review content">
     <div id="current-file" hidden>
       <span id="current-file-path" tabindex="0"></span>
@@ -502,37 +564,27 @@ body.document .doc b{font-weight:700} body.document .doc i{font-style:italic} bo
     </div>
     <section id="diff"></section>
   </section>
-  <aside id="threads-panel">
-    <div class="panel-head">
-      <h2>Comments</h2>
-      <span>
-        <button id="next-thread" class="tiny ghost" title="Jump to the next comment (N)">Next</button>
-        <button id="discard" class="tiny ghost" hidden>Discard all</button>
-      </span>
-    </div>
-    <ul id="threads"></ul>
-  </aside>
 </main>
 <div id="composer" hidden>
   <div class="where" id="composer-where"></div>
   <textarea id="composer-text" rows="3" placeholder="Describe the problem on the selected lines. &#9166; saves, Esc cancels."></textarea>
   <div class="acts">
-    <button id="composer-cancel">Cancel</button>
-    <button id="composer-save" class="primary">Add comment</button>
+    <button id="composer-cancel" class="tiny">Cancel</button>
+    <button id="composer-save" class="tiny primary">Add comment</button>
   </div>
 </div>
 <footer>
   <div>
     <label for="review-comment">Overall comment (optional)</label>
-    <textarea id="review-comment" rows="2" placeholder="Sent with your decision, for the whole change rather than one line."></textarea>
+    <textarea id="review-comment" rows="1" placeholder="Sent with your decision, for the whole change rather than one line."></textarea>
   </div>
   <div>
     <div class="actions">
       <span id="counts"></span>
       <button id="cancel" class="danger">Cancel <kbd>&#8984;C</kbd></button>
       <button id="planning">Return to planning <kbd>&#8984;P</kbd></button>
-      <button id="changes">Request changes <kbd>&#8984;R</kbd></button>
-      <button id="approve" class="primary">Approve <kbd>&#8984;A</kbd></button>
+      <button id="changes" class="primary">Request changes <kbd>&#8984;R</kbd></button>
+      <button id="approve" class="go">Approve <kbd>&#8984;A</kbd></button>
     </div>
     <div id="banner" hidden>
       <span id="banner-text"></span>
@@ -745,16 +797,15 @@ function render() {
   const data = state.data;
   renderBrief(data.criterion);
   el("review-id").textContent = "review " + data.review_id.slice(0, 12);
-  el("chip-files").innerHTML = "<b>" + data.totals.files + "</b> file" + (data.totals.files === 1 ? "" : "s");
-  el("chip-add").innerHTML = "<b>+" + data.totals.added + "</b> added";
-  el("chip-del").innerHTML = "<b>-" + data.totals.removed + "</b> removed";
+  el("chip-files").textContent = data.totals.files + " file" + (data.totals.files === 1 ? "" : "s");
+  el("chip-add").textContent = "+" + data.totals.added;
+  el("chip-del").textContent = "\u2212" + data.totals.removed;
   const repos = el("repos");
   repos.textContent = "";
   for (const repository of data.repositories) {
     const item = document.createElement("li");
-    item.className = "chip repo";
     const scope = repository.paths ? " [" + repository.paths.join(", ") + "]" : "";
-    item.textContent = repository.root + scope + "   +" + repository.added + " / -" + repository.removed;
+    item.textContent = repository.root + scope + " \u00b7 +" + repository.added + " / \u2212" + repository.removed;
     repos.appendChild(item);
   }
   state.files = [];
@@ -807,10 +858,15 @@ function pathLabel(path) {
 function renderFiles() {
   const list = el("files");
   list.textContent = "";
+  const guided = state.reviewView === "guided" && !!state.data?.guide;
+  el("sidebar-title").textContent = guided ? "Guide" : "Files";
+  list.hidden = guided;
+  el("guide-flow").hidden = !guided;
+  if (guided) renderGuideFlow();
   const shown = visibleFiles();
-  el("file-total").textContent = state.filter.trim()
-    ? shown.length + " / " + state.files.length
-    : String(state.files.length);
+  el("file-total").textContent = guided
+    ? state.data.guide.chapters.length + " chapter" + (state.data.guide.chapters.length === 1 ? "" : "s")
+    : state.filter.trim() ? shown.length + " / " + state.files.length : String(state.files.length);
   if (!state.files.length) {
     const empty = document.createElement("li");
     empty.className = "empty";
@@ -828,26 +884,29 @@ function renderFiles() {
   shown.forEach((file) => {
     const index = state.files.indexOf(file);
     const item = document.createElement("li");
+    item.className = "node";
     item.tabIndex = 0;
     item.dataset.file = String(index);
+    item.title = file.repository + "/" + file.path;
+    const title = document.createElement("b");
     const name = document.createElement("span");
     name.className = "fname";
-    name.appendChild(fileIcon(file));
-    const path = pathLabel(file.path);
-    name.appendChild(path);
-    const counts = document.createElement("span");
-    counts.className = "counts";
-    const numbers = document.createElement("span");
-    numbers.textContent = file.status + "  +" + file.added + " / -" + file.removed;
-    counts.appendChild(numbers);
+    const separator = file.path.lastIndexOf("/");
+    const base = document.createElement("strong");
+    base.textContent = file.path.slice(separator + 1);
+    name.append(fileIcon(file), base);
+    title.append(name, fileStat(file));
+    const sub = document.createElement("span");
+    sub.className = "sub";
+    sub.textContent = (separator >= 0 ? file.path.slice(0, separator + 1) + " \u00b7 " : "") + file.status;
+    item.append(title, sub);
     const open = openCountFor(file);
     if (open) {
       const badge = document.createElement("span");
-      badge.className = "open";
+      badge.className = "badge";
       badge.textContent = open + " to fix";
-      counts.appendChild(badge);
+      item.appendChild(badge);
     }
-    item.append(name, counts);
     const go = () => {
       state.expanded.add(index);
       renderDiff();
@@ -861,11 +920,94 @@ function renderFiles() {
   trackFile();
 }
 
+function fileStat(file) {
+  const stat = document.createElement("span");
+  stat.className = "stat";
+  const added = document.createElement("span");
+  added.className = "p";
+  added.textContent = "+" + file.added;
+  const removed = document.createElement("span");
+  removed.className = "m";
+  removed.textContent = "\u2212" + file.removed;
+  stat.append(added, " ", removed);
+  return stat;
+}
+
+// The guide drawn as a flow: one box per chapter, in the agent's order. A box
+// scrolls the shared diff to its chapter; the diff itself never splits.
+function renderGuideFlow() {
+  const host = el("guide-flow");
+  host.textContent = "";
+  const guide = state.data.guide;
+  const shown = new Set(visibleFiles());
+  const node = (className, title, detail, chapter) => {
+    const box = document.createElement("button");
+    box.type = "button";
+    box.className = className;
+    box.dataset.chapter = String(chapter);
+    box.setAttribute("aria-pressed", "false");
+    const heading = document.createElement("b");
+    heading.textContent = title;
+    const sub = document.createElement("span");
+    sub.className = "sub";
+    sub.textContent = detail;
+    box.append(heading, sub);
+    box.addEventListener("click", () => showChapter(chapter));
+    return box;
+  };
+  host.appendChild(node("node main", guide.authored ? "The change" : "Every file", guide.summary, -1));
+  guide.chapters.forEach((chapter, index) => {
+    const arrow = document.createElement("div");
+    arrow.className = "arrow";
+    arrow.setAttribute("aria-hidden", "true");
+    const tip = document.createElement("i");
+    tip.className = "tip";
+    arrow.appendChild(tip);
+    const files = chapter.file_indices.filter((file) => shown.has(state.files[file])).length;
+    const box = node("node", (index + 1) + ". " + chapter.title, chapter.summary, index);
+    const count = document.createElement("span");
+    count.className = "count";
+    count.textContent = files + " file" + (files === 1 ? "" : "s");
+    box.firstChild.appendChild(count);
+    if (!files) { box.classList.add("filtered"); box.disabled = true; }
+    host.append(arrow, box);
+  });
+  trackChapter();
+}
+
+function showChapter(chapter) {
+  const host = el("diff");
+  const target = chapter < 0 ? host.querySelector(".guide-overview")
+    : host.querySelector('.guide-chapter[data-chapter="' + chapter + '"]');
+  if (!target) return;
+  target.scrollIntoView({block: "start"});
+  markChapter(chapter);
+}
+
+function markChapter(chapter) {
+  for (const box of el("guide-flow").querySelectorAll(".node")) {
+    box.setAttribute("aria-pressed", box.dataset.chapter === String(chapter) ? "true" : "false");
+  }
+}
+
+function trackChapter() {
+  if (boot.mode === "document" || state.reviewView !== "guided") return;
+  const host = el("diff");
+  const top = Math.max(host.getBoundingClientRect().top, 0) + 48;
+  let current = -1;
+  for (const section of host.querySelectorAll(".guide-chapter")) {
+    if (section.getBoundingClientRect().top <= top) current = Number(section.dataset.chapter);
+  }
+  markChapter(current);
+}
+
 function trackFile() {
   if (boot.mode === "document") return;
   const host = el("diff");
   const blocks = Array.from(host.querySelectorAll(".file"));
-  const top = host.getBoundingClientRect().top;
+  // On a phone the window scrolls instead of the pane, so the pane's top can
+  // be above the viewport.
+  const top = Math.max(host.getBoundingClientRect().top, 0);
   const location = state.changeLocation;
   const destination = location && Math.abs(host.scrollTop - location.scrollTop) < 1 && blocks.find((block) => Number(block.dataset.file) === location.fileIndex);
   const current = destination || blocks.find((block) => block.getBoundingClientRect().bottom > top + 1) || blocks[blocks.length - 1];
@@ -909,7 +1051,7 @@ function changeElement(stop) {
 
 function trackChanges() {
   const stops = state.changeStops;
-  const top = el("diff").getBoundingClientRect().top;
+  const top = Math.max(el("diff").getBoundingClientRect().top, 0);
   let current = -1;
   stops.forEach((stop, index) => {
     if (stop.fileIndex !== state.currentFile) return;
@@ -1303,11 +1445,12 @@ function renderGuidedDiff(host) {
     if (!files.length) return;
     const section = document.createElement("section");
     section.className = "guide-chapter";
+    section.dataset.chapter = String(chapterIndex);
     const context = document.createElement("div");
     context.className = "guide-context";
     const position = document.createElement("p");
     position.className = "guide-position";
-    position.textContent = "Chapter " + (chapterIndex + 1) + " / " + guide.chapters.length;
+    position.textContent = "Chapter " + (chapterIndex + 1) + " of " + guide.chapters.length;
     const title = document.createElement("h2");
     title.textContent = chapter.title;
     const summary = document.createElement("p");
@@ -1470,23 +1613,70 @@ function renderFileDiff(file) {
     return block;
 }
 
-// A commented line carries a dot in the gutter, so the diff itself shows where
-// the work is instead of making the reader hunt through the side panel.
+// A commented line carries a dot in the gutter and its comment as a card under
+// the range's last line, so the diff itself shows where the work is.
 function markThreadedRows() {
+  const host = el("diff");
+  for (const card of host.querySelectorAll(".thread-card")) card.remove();
+  for (const row of host.querySelectorAll(".row")) {
+    row.classList.remove("threaded");
+    row.classList.remove("resolved-thread");
+  }
+  const after = new Map();
   for (const thread of state.threads) {
     if (thread.target.scope !== "line") continue;
     const fileIndex = state.files.findIndex(
       (file) => file.path === thread.target.path && file.repository === thread.target.repository);
     if (fileIndex < 0) continue;
     const file = state.files[fileIndex];
-    const rowIndex = file.lines.findIndex(
-      (line) => line.type !== "meta" && lineNumberFor(line, thread.target.side) === thread.target.start_line);
-    if (rowIndex < 0) continue;
-    const row = diffRow(fileIndex, rowIndex, thread.target.side || "new");
+    const side = thread.target.side || "new";
+    const rowFor = (number) => {
+      const index = file.lines.findIndex((line) => line.type !== "meta" && lineNumberFor(line, thread.target.side) === number);
+      return index < 0 ? null : diffRow(fileIndex, index, side);
+    };
+    const row = rowFor(thread.target.start_line);
     if (!row) continue;
     row.classList.add("threaded");
     if (thread.resolved) row.classList.add("resolved-thread");
+    const last = rowFor(thread.target.end_line) || row;
+    const anchor = last.closest(".split-row") || last;
+    const card = threadCard(thread);
+    (after.get(anchor) || anchor).after(card);
+    after.set(anchor, card);
   }
+}
+
+function threadCard(thread) {
+  const target = thread.target;
+  const card = document.createElement("div");
+  card.className = "thread-card" + (thread.resolved ? " resolved" : "");
+  const who = document.createElement("span");
+  who.className = "who";
+  const lines = target.end_line === target.start_line ? "line " + target.start_line
+    : "lines " + target.start_line + "\u2013" + target.end_line;
+  const side = target.side === "old" ? " (before)" : "";
+  who.textContent = (thread.resolved ? "Resolved \u00b7 " : "Your comment \u00b7 ") + lines + side;
+  const text = document.createElement("p");
+  text.className = "text";
+  text.textContent = thread.text;
+  const acts = document.createElement("div");
+  acts.className = "acts";
+  const toggle = document.createElement("button");
+  toggle.className = "tiny";
+  toggle.textContent = thread.resolved ? "Reopen" : "Resolve";
+  toggle.addEventListener("click", () => { thread.resolved = !thread.resolved; refreshThreads(); });
+  const remove = document.createElement("button");
+  remove.className = "tiny";
+  remove.textContent = "Delete";
+  remove.addEventListener("click", () => {
+    state.threads = state.threads.filter((other) => other.id !== thread.id);
+    refreshThreads();
+  });
+  acts.append(toggle, remove);
+  card.append(who, text, acts);
+  // A press on a card is not a press on the line under it.
+  card.addEventListener("mousedown", (event) => event.stopPropagation());
+  return card;
 }
 
 function lineNumberFor(line, side) {
@@ -1507,7 +1697,7 @@ const BLOCK_CLASS = {
 function renderDocument() {
   const data = state.data;
   document.body.classList.add("document");
-  el("review-title").textContent = "Review document";
+  el("review-title").textContent = "Document review";
   renderBrief(data.criterion);
   el("review-id").textContent = data.name || data.path;
   const line = document.createElement("div");
@@ -1639,11 +1829,14 @@ const DIAGRAM_KEYWORDS = ["graph", "flowchart", "sequenceDiagram", "classDiagram
 function prepareMermaid() {
   if (mermaidReady || !window.mermaid) return mermaidReady;
   try {
+    const dark = !!window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches;
     window.mermaid.initialize({
-      startOnLoad: false, securityLevel: "strict", theme: "dark",
-      themeVariables: { fontFamily: "Inter, sans-serif", primaryColor: "#1a1e28",
-        primaryTextColor: "#e7ecf4", primaryBorderColor: "#3a4256", lineColor: "#8b95a5",
-        textColor: "#c9d3e0" },
+      startOnLoad: false, securityLevel: "strict", theme: dark ? "dark" : "base",
+      themeVariables: dark
+        ? { fontFamily: "Nunito, sans-serif", primaryColor: "#1b2840", primaryTextColor: "#e6ecf7",
+            primaryBorderColor: "#33425e", lineColor: "#9aa9c2", textColor: "#e6ecf7" }
+        : { fontFamily: "Nunito, sans-serif", primaryColor: "#e4edfc", primaryTextColor: "#16233b",
+            primaryBorderColor: "#1352bf", lineColor: "#5b6b85", textColor: "#16233b" },
       flowchart: { htmlLabels: false },
     });
   } catch (error) { return false; }
@@ -1827,15 +2020,24 @@ function paintSelection() {
 }
 
 function markDocumentThreadedRows() {
+  const host = el("diff");
+  for (const card of host.querySelectorAll(".thread-card")) card.remove();
+  for (const node of host.querySelectorAll(".blk")) node.classList.remove("threaded", "resolved-thread");
+  const after = new Map();
   for (const thread of state.threads) {
     if (thread.target.scope !== "line") continue;
     const wanted = thread.target.start_line;
     const block = (state.blocks || []).find((item) => wanted >= item.start && wanted <= item.end);
     if (!block) continue;
-    const node = el("diff").querySelector('[data-start="' + block.start + '"]');
+    const node = host.querySelector('[data-start="' + block.start + '"]');
     if (!node) continue;
     node.classList.add("threaded");
     if (thread.resolved) node.classList.add("resolved-thread");
+    const last = (state.blocks || []).find((item) => thread.target.end_line >= item.start && thread.target.end_line <= item.end);
+    const anchor = (last && host.querySelector('[data-start="' + last.start + '"]')) || node;
+    const card = threadCard(thread);
+    (after.get(anchor) || anchor).after(card);
+    after.set(anchor, card);
   }
 }
 
@@ -1953,6 +2155,9 @@ function renderFooter() {
   const resolved = resolvedThreads().length;
   const review = reviewText() ? 1 : 0;
   el("counts").textContent = unresolved + " to fix, " + resolved + " resolved, " + review + " review";
+  const comments = state.threads.length;
+  el("chip-comments").hidden = comments === 0;
+  el("chip-comments").textContent = comments + " comment" + (comments === 1 ? "" : "s");
   el("discard").hidden = unresolved === 0;
   el("banner").hidden = unresolved === 0;
   el("banner-text").textContent = unresolved
@@ -2161,10 +2366,21 @@ el("diff").addEventListener("mousedown", (event) => {
 // Releasing the mouse ends a comment: a click or a dragged range both mean
 // "I want to say something about this", so the box opens straight away instead
 // of making the reader remember a second key.
-el("diff").addEventListener("scroll", () => { trackOutline(); trackFile(); }, {passive: true});
-window.addEventListener("resize", () => { trackOutline(); trackFile(); });
+el("diff").addEventListener("scroll", () => { trackOutline(); trackFile(); trackChapter(); }, {passive: true});
+window.addEventListener("resize", () => { trackOutline(); trackFile(); trackChapter(); });
+window.addEventListener("scroll", () => {
+  // On a phone the window scrolls, not the pane, so a jump's lock is released
+  // by the window's own scrolling.
+  if (el("diff").scrollTop === 0 && el("diff").scrollHeight <= el("diff").clientHeight) state.changeLocation = null;
+  trackOutline(); trackFile(); trackChapter();
+}, {passive: true});
 el("review-brief").addEventListener("toggle", () => { trackOutline(); trackFile(); });
-el("diff").addEventListener("mouseup", () => {
+el("diff").addEventListener("mouseup", (event) => {
+  // Releasing over a comment card, such as on its buttons, opens no composer.
+  if (event.target.closest(".thread-card")) {
+    state.dragging = false;
+    return;
+  }
   if (state.submitted || !state.selection) return;
   if (boot.mode !== "document" && !state.dragging) return;
   state.dragging = false;

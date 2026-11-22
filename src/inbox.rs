@@ -1144,6 +1144,10 @@ fn serve_http(service: &Arc<Service>, mut request: tiny_http::Request) {
             let page = INBOX_PAGE.replace("__INBOX_BOOT__", &json::dumps(&Value::Object(boot), json::COMPACT));
             html::respond(request, 200, page.into_bytes(), "text/html; charset=utf-8");
         }
+        (tiny_http::Method::Get, ["font", name]) => match html::font(name) {
+            Some(data) => html::respond(request, 200, data.to_vec(), "font/woff2"),
+            None => html::fail(request, 404, "not found"),
+        },
         (tiny_http::Method::Get, ["api", "items"]) => {
             let body = service.items_json();
             html::respond(request, 200, body, "application/json; charset=utf-8");

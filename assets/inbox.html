@@ -6,50 +6,61 @@
 <title>senpai inbox</title>
 <style>
 :root{
-  color-scheme:dark;
-  --sans:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
-  --mono:ui-monospace,"SF Mono",SFMono-Regular,Menlo,monospace;
-  --bg:#0b0d12; --surface:#12151d; --raised:#181c26;
-  --line:#232936; --fg:#e7ecf4; --muted:#93a0b5; --faint:#6a7a90;
-  --accent:#6ea8fe; --accent-ink:#0b1220; --accent-soft:rgba(110,168,254,.16);
-  --danger:#ff7b72; --ring:rgba(110,168,254,.45);
+  color-scheme:light dark;
+  --font:"Nunito","Segoe UI",system-ui,-apple-system,sans-serif;
+  --mono:"JetBrains Mono",ui-monospace,"SF Mono",SFMono-Regular,Menlo,monospace;
+  --bg:#f6f8fc; --surface:#ffffff; --fg:#16233b; --muted:#5b6b85; --faint:#7a879c; --line:#c9d3e3;
+  --accent:#1352bf; --accent-soft:#e4edfc; --on-accent:#ffffff;
+  --del-fg:#b3382f; --del-bg:#fdecec;
 }
-@media (prefers-color-scheme: light){
+@media (prefers-color-scheme: dark){
   :root{
-    color-scheme:light;
-    --bg:#f6f7f9; --surface:#ffffff; --raised:#f0f2f5;
-    --line:#dde1e8; --fg:#1b1f27; --muted:#5b6678; --faint:#8a94a6;
-    --accent:#2f6fde; --accent-ink:#ffffff; --accent-soft:rgba(47,111,222,.12);
-    --danger:#c93c32; --ring:rgba(47,111,222,.35);
+    --bg:#0e1626; --surface:#162136; --fg:#e6ecf7; --muted:#9aa9c2; --faint:#7786a0; --line:#33425e;
+    --accent:#7fa8f5; --accent-soft:#1b2c4d; --on-accent:#0e1626;
+    --del-fg:#f2a19a; --del-bg:#3a1a1c;
   }
 }
 *{box-sizing:border-box}
-body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.5 var(--sans)}
-main{max-width:860px;margin:0 auto;padding:32px 16px 64px}
-h1{font-size:20px;margin:0 0 4px}
-.sub{color:var(--muted);margin:0 0 24px}
-.empty{color:var(--faint);padding:48px 0;text-align:center}
-.item{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:16px 18px;margin:0 0 12px}
-.meta{display:flex;gap:10px;align-items:center;color:var(--muted);font-size:13px;margin:0 0 6px;flex-wrap:wrap}
-.kind{background:var(--accent-soft);color:var(--accent);border-radius:999px;padding:1px 10px;font-weight:600}
-.title{font-size:16px;white-space:pre-wrap;overflow-wrap:anywhere;margin:0 0 6px}
-.places{font:12px/1.5 var(--mono);color:var(--faint);overflow-wrap:anywhere;margin:0 0 10px}
-a.open,button{display:inline-block;border:0;border-radius:8px;padding:7px 14px;font:600 14px var(--sans);cursor:pointer;text-decoration:none}
-a.open,button.primary{background:var(--accent);color:var(--accent-ink)}
-button.choice,button.quiet{background:var(--raised);color:var(--fg);border:1px solid var(--line)}
-button.choice[aria-pressed="true"]{border-color:var(--accent);box-shadow:0 0 0 2px var(--ring)}
-a.open:focus-visible,button:focus-visible,textarea:focus-visible{outline:2px solid var(--ring);outline-offset:2px}
-.choices{display:flex;gap:8px;flex-wrap:wrap;margin:0 0 10px}
-textarea{width:100%;min-height:72px;background:var(--bg);color:var(--fg);border:1px solid var(--line);border-radius:8px;padding:8px 10px;font:14px/1.5 var(--sans);resize:vertical;margin:0 0 10px}
-.actions{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
-.error{color:var(--danger);font-size:13px}
-.offline{color:var(--danger);margin:0 0 16px}
+@font-face{font-family:"Nunito";src:url("font/nunito-latin-var.woff2") format("woff2");font-weight:200 1000;font-style:normal;font-display:swap}
+body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.5 var(--font)}
+main{max-width:1200px;margin:0 auto;padding:28px 16px 64px;display:flex;flex-direction:column;gap:18px}
+.eyebrow{font-size:11.5px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;color:var(--accent);margin:0}
+h1{font-size:22px;font-weight:800;margin:4px 0 2px;text-wrap:balance}
+.sub{color:var(--muted);margin:0;font-size:14px}
+.empty{color:var(--faint);padding:48px 16px;text-align:center;border:1px dashed var(--line);border-radius:10px;margin:0}
+#items{display:grid;align-items:start;grid-template-columns:repeat(auto-fill,minmax(min(100%,380px),1fr));gap:12px}
+#items:empty{display:none}
+.item{background:var(--surface);border:1.5px solid var(--line);border-radius:10px;padding:14px 16px;display:flex;flex-direction:column;gap:8px;min-width:0}
+.item.question{border-color:var(--accent)}
+.meta{display:flex;justify-content:space-between;align-items:center;gap:10px;font-size:12.5px;color:var(--muted);font-weight:700}
+.kind{background:var(--accent-soft);color:var(--accent);border-radius:999px;padding:2px 10px;font-weight:800;white-space:nowrap}
+.title{font-size:16px;font-weight:800;margin:0;white-space:pre-wrap;overflow-wrap:anywhere;text-wrap:balance}
+.places{font:12px/1.5 var(--mono);color:var(--muted);overflow-wrap:anywhere;white-space:pre-wrap;margin:0}
+.foot{display:flex;justify-content:flex-end;align-items:center;gap:8px;flex-wrap:wrap;margin-top:2px}
+a.open,button{display:inline-block;font:800 13px/1.4 var(--font);padding:6px 12px;border-radius:8px;border:1.5px solid var(--line);
+  background:var(--surface);color:var(--fg);cursor:pointer;text-decoration:none;white-space:nowrap}
+a.open:hover,button:hover:not(:disabled){border-color:var(--accent)}
+a.open,button.primary{background:var(--accent);border-color:var(--accent);color:var(--on-accent)}
+button:disabled{opacity:.5;cursor:not-allowed}
+.choices{display:flex;gap:6px;flex-wrap:wrap}
+button.choice{border-radius:999px;font-weight:700;padding:5px 12px;background:var(--bg)}
+button.choice[aria-pressed="true"]{border-color:var(--accent);background:var(--accent-soft);color:var(--accent)}
+a.open:focus-visible,button:focus-visible,textarea:focus-visible{outline:3px solid var(--accent);outline-offset:2px}
+textarea{width:100%;min-height:64px;background:var(--surface);color:var(--fg);border:1.5px solid var(--line);border-radius:8px;padding:8px 10px;font:14px/1.5 var(--font);resize:vertical}
+textarea::placeholder{color:var(--faint)}
+.error{color:var(--del-fg);font-size:13px;font-weight:700;margin-right:auto}
+.error:empty{display:none}
+.offline{color:var(--del-fg);background:var(--del-bg);border-radius:8px;padding:8px 12px;margin:0;font-weight:700}
+@media (prefers-reduced-motion: reduce){*{transition:none !important;animation:none !important}}
 </style>
 </head>
 <body>
 <main>
-  <h1>senpai inbox</h1>
-  <p class="sub">Reviews and questions from your coding agents. They wait here until you decide.</p>
+  <header>
+    <p class="eyebrow">senpai inbox</p>
+    <h1>Waiting for you</h1>
+    <p class="sub">Reviews and questions from your coding agents. They wait here until you decide.</p>
+  </header>
   <p class="offline" id="offline" hidden>The senpai service is not running. Items will return when an agent asks again.</p>
   <div id="items"></div>
   <p class="empty" id="empty">Nothing is waiting for you.</p>
@@ -78,7 +89,7 @@ function el(tag, className, text) {
 }
 
 function kindLabel(kind) {
-  return {diff: "diff review", document: "document review", question: "question"}[kind] || kind;
+  return {diff: "Diff review", document: "Document review", question: "Question"}[kind] || kind;
 }
 
 function questionForm(item, card) {
@@ -124,13 +135,13 @@ function questionForm(item, card) {
   }
   send.addEventListener("click", () => post({id: item.id, option: chosen, text: text.value}));
   dismiss.addEventListener("click", () => post({id: item.id, dismissed: true}));
-  const actions = el("div", "actions");
-  actions.append(send, dismiss, error);
+  const actions = el("div", "foot");
+  actions.append(error, dismiss, send);
   card.append(text, actions);
 }
 
 function card(item) {
-  const node = el("section", "item");
+  const node = el("section", "item" + (item.kind === "question" ? " question" : ""));
   node.id = "item-" + item.id;
   const meta = el("div", "meta");
   const ageNode = el("span", "", age(item.age));
@@ -144,7 +155,9 @@ function card(item) {
     open.href = item.url;
     open.target = "_blank";
     open.rel = "noopener";
-    node.append(open);
+    const foot = el("div", "foot");
+    foot.append(open);
+    node.append(foot);
   }
   return {node, ageNode};
 }

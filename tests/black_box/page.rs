@@ -115,8 +115,13 @@ pub const TESTS: &[(&str, fn())] = &[
 ];
 
 const REVIEW_ID: &str = "0123456789abcdef0123456789abcdef";
-const FONT_NAMES: [&str; 4] =
-    ["jetbrains-mono-400.woff2", "jetbrains-mono-700.woff2", "inter-latin-var.woff2", "source-serif-4-latin-var.woff2"];
+const FONT_NAMES: [&str; 5] = [
+    "jetbrains-mono-400.woff2",
+    "jetbrains-mono-700.woff2",
+    "inter-latin-var.woff2",
+    "source-serif-4-latin-var.woff2",
+    "nunito-latin-var.woff2",
+];
 /// The reviewer's close grace period is a fixed five seconds, so the decision
 /// tests wait it out for real.
 const GRACE: f64 = 5.0;
@@ -627,7 +632,8 @@ fn serves_the_page_with_a_locked_down_policy() {
     assert!(page.contains(&session.token), "the page needs its own token to reach its routes");
     assert!(!matches(EXTERNAL_RESOURCE, &page), "the page loads an external resource");
     assert!(policy.contains("font-src 'self'"), "{policy}");
-    assert!(!page.contains("prefers-color-scheme: light"), "the page is dark only");
+    assert!(!page.contains("prefers-color-scheme: light"), "light is the bare :root default, so only dark is a media query");
+    assert!(page.contains("prefers-color-scheme: dark"), "the dark theme is kept");
 }
 
 fn every_route_is_behind_the_token() {
@@ -672,6 +678,7 @@ fn the_page_uses_the_bundled_font_and_nerd_glyphs() {
     let page = get(&session.url).text();
     assert!(page.contains("font-family:\"JetBrains Mono\""));
     assert!(page.contains("src:url(\"font/jetbrains-mono-400.woff2\")"));
+    assert!(page.contains("src:url(\"font/nunito-latin-var.woff2\")"));
     assert!(page.contains("--nerd:"));
     assert!(page.contains("FILE_GLYPHS"), "file icons come from the nerd glyph map");
 }
