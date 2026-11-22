@@ -13,6 +13,7 @@ mod client;
 mod fakes;
 mod inbox;
 mod page;
+mod skill;
 mod support;
 
 use libtest_mimic::{Arguments, Trial};
@@ -26,7 +27,7 @@ fn main() {
     }
     let args = Arguments::from_args();
     let mut trials = Vec::new();
-    for (module, tests) in [("client", client::TESTS), ("page", page::TESTS), ("inbox", inbox::TESTS)] {
+    for (module, tests) in [("client", client::TESTS), ("page", page::TESTS), ("inbox", inbox::TESTS), ("skill", skill::TESTS)] {
         for &(name, test) in tests {
             trials.push(Trial::test(format!("{module}::{name}"), move || {
                 test();

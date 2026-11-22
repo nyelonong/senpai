@@ -248,6 +248,24 @@ is decided, here or in the browser. Press `?` for all keys.
 - **`SENPAI_SURFACE`** chooses where new items appear: `auto` (default: Tern inside Tern, Rex inside Rex, else the browser), `browser`, `tern`, `rex` or `none`.
 - **Same checks.** The terminal sends decisions to the service, which checks them exactly like the page's. Document reviews show the markdown source lines, so comments land on the same lines. The Guided tab and syntax colors stay in the browser.
 
+### Agent skill
+
+`skills/senpai/SKILL.md` teaches coding agents to use senpai: when to run a
+review, the guide format, waiting and recovery, acting on the decision, and
+verify/consume. When a review runs and which model runs it is your workflow's
+policy, not this skill's.
+
+```sh
+"$SENPAI" skill install   # link it for Claude, ~/.agents, Pi and Codex; copy it for Gemini
+"$SENPAI" skill check     # linked, stale, missing, foreign or skipped, per agent
+"$SENPAI" skill remove    # remove only senpai's own links and copies
+```
+
+Agents that are not installed are skipped, and anything at `skills/senpai` that
+senpai did not put there is reported and left alone. The links point at this
+checkout (`SENPAI_SKILL_DIR` overrides it), so pulling a new skill needs no
+reinstall; rerun `skill install` after moving the checkout.
+
 ### Privacy and trust
 
 | Boundary | Rule |

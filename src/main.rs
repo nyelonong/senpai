@@ -18,6 +18,7 @@ mod os;
 mod pystr;
 mod recovery;
 mod request;
+mod skill;
 mod result;
 mod reviewer;
 mod snapshot;
@@ -45,6 +46,7 @@ fn main() -> ExitCode {
         Some("inbox") => Some(inbox::inbox_main),
         Some("ask") => Some(inbox::ask_main),
         Some("tui") => Some(tui::main),
+        Some("skill") => Some(skill::main),
         _ => None,
     };
     if let Some(command) = service_command {

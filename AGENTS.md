@@ -14,6 +14,6 @@ cargo test --release
 node --test tests/test_diff_view.js
 ```
 
-After changing the binary, run `cargo install --path .` so agents use the new build.
+After changing the binary, run `cargo install --path .` so agents use the new build. `skills/senpai/SKILL.md` is the agent skill; keep it in step with the commands it documents.
 
 Do not create or publish a remote without explicit approval.
