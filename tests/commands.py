@@ -3,8 +3,8 @@
 ``SENPAI_BINARY`` overrides the binary; by default the tests run the release
 build, so run ``cargo build --release`` first.
 
-The suite turns the inbox off for every process it starts and hides any Rex
-session it runs in, so no test touches the person's real inbox or Rex panes; ``test_inbox.py`` opts back in with a private
+The suite turns the inbox off for every process it starts and hides any Rex or
+Tern session it runs in, so no test touches the person's real inbox or panes; ``test_inbox.py`` opts back in with a private
 ``SENPAI_HOME``.
 """
 from __future__ import annotations
@@ -42,9 +42,10 @@ SERVE_IDLE_ENV = "SENPAI_SERVE_IDLE"
 
 SURFACE_ENV = "SENPAI_SURFACE"
 REX_ENV = ("REX_SESSION", "REX_BLOCK")
+TERN_ENV = "TERN_PANE"
 
 os.environ[INBOX_ENV] = "0"
-for _name in (SURFACE_ENV, *REX_ENV):
+for _name in (SURFACE_ENV, *REX_ENV, TERN_ENV):
     os.environ.pop(_name, None)
 
 

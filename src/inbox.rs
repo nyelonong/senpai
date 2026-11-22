@@ -313,7 +313,12 @@ pub fn request(message: Object) -> Result<Object> {
 enum Surface {
     Browser,
     Rex,
+    Tern,
     Quiet,
+}
+
+fn tern_pane() -> Option<String> {
+    std::env::var("TERN_PANE").ok().filter(|v| !v.trim().is_empty())
 }
 
 fn rex_target() -> Option<(String, String)> {
@@ -321,16 +326,18 @@ fn rex_target() -> Option<(String, String)> {
     Some((get("REX_SESSION")?, get("REX_BLOCK")?))
 }
 
-/// `SENPAI_SURFACE`: `auto` (a Rex split inside Rex, else the browser),
-/// `browser`, `rex` or `none`. `HTML_REVIEW_NO_BROWSER` still turns the
-/// browser off.
+/// `SENPAI_SURFACE`: `auto` (the page in a Tern browser block inside Tern, a
+/// terminal split inside Rex, else the browser), `browser`, `tern`, `rex` or
+/// `none`. `HTML_REVIEW_NO_BROWSER` still turns the browser off.
 fn surface(browser: bool) -> Surface {
     let value = std::env::var(SURFACE_ENV).unwrap_or_default();
     let browser_or_quiet = if browser { Surface::Browser } else { Surface::Quiet };
     match py_strip(&value).to_lowercase().as_str() {
         "browser" => browser_or_quiet,
         "rex" => Surface::Rex,
+        "tern" => Surface::Tern,
         "none" => Surface::Quiet,
+        _ if tern_pane().is_some() => Surface::Tern,
         _ if rex_target().is_some() => Surface::Rex,
         _ => browser_or_quiet,
     }
@@ -380,17 +387,131 @@ fn open_rex_split(id: &Value) -> std::result::Result<(), String> {
     }
 }
 
-/// Shows a new item where `surface` says; a failed Rex split falls back to
-/// the browser when it is allowed.
-fn present(surface: Surface, browser: bool, id: &Value, inbox: &str, producer: &str) {
-    if surface != Surface::Rex {
-        return;
+/// Runs `tern browser OP` and returns its `ok` answer.
+fn tern_browser(op: Object) -> std::result::Result<Value, String> {
+    let request = json::dumps(&Value::Object(op), json::COMPACT);
+    let mut child = Command::new("tern")
+        .args(["browser", &request, "--timeout", "15"])
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .map_err(|e| format!("unable to run tern: {e}"))?;
+    let mut stdout = child.stdout.take().ok_or("tern has no output")?;
+    let (sender, receiver) = std::sync::mpsc::channel();
+    thread::spawn(move || {
+        let mut buffer = Vec::new();
+        let _ = stdout.read_to_end(&mut buffer);
+        let _ = sender.send(buffer);
+    });
+    let deadline = Instant::now() + Duration::from_secs(20);
+    let gave_up = |child: &mut std::process::Child| {
+        let _ = child.kill();
+        let _ = child.wait();
+        Err("tern browser did not answer".to_string())
+    };
+    loop {
+        match child.try_wait() {
+            Ok(Some(_)) => break,
+            Ok(None) if Instant::now() < deadline => thread::sleep(Duration::from_millis(50)),
+            Ok(None) | Err(_) => return gave_up(&mut child),
+        }
     }
-    if let Err(error) = open_rex_split(id) {
-        diag::write(&format!("{producer}: unable to open the review in Rex ({error})\n"));
+    // A helper that `tern` leaves running may hold its output open, so the
+    // answer is awaited only until the same deadline.
+    let left = deadline.saturating_duration_since(Instant::now()).max(Duration::from_millis(500));
+    let Ok(output) = receiver.recv_timeout(left) else {
+        return Err("tern browser did not answer".into());
+    };
+    let answer = std::str::from_utf8(&output)
+        .ok()
+        .and_then(|text| json::loads_str(text.trim()).ok())
+        .and_then(|value| value.as_object().cloned())
+        .ok_or("tern browser gave no answer")?;
+    if let Some(error) = answer.get("error").and_then(Value::as_object) {
+        let message = text_field(error, "message").or_else(|| text_field(error, "kind"));
+        return Err(message.map(|m| m.display()).unwrap_or_else(|| "tern browser failed".into()));
+    }
+    answer.get("ok").cloned().ok_or_else(|| "tern browser gave no answer".into())
+}
+
+fn block_text(value: &Value) -> Option<String> {
+    match value {
+        Value::Int(n) => Some(n.to_string()),
+        Value::Str(s) => Some(s.display()),
+        _ => None,
+    }
+}
+
+/// Opens `url` in a Tern browser block docked beside the agent's pane and
+/// returns the block, so it can be closed once the item is done.
+fn open_tern_page(url: &str) -> std::result::Result<Value, String> {
+    let pane = tern_pane().ok_or("TERN_PANE is not set")?;
+    let owner = pane.trim().parse::<i128>().map(Value::Int).unwrap_or_else(|_| Value::from(pane.trim()));
+    let opened = tern_browser(
+        Object::new().with("op", "open").with("owner", owner).with("url", url).with("how", "beside"),
+    )?;
+    let block = match &opened {
+        Value::Object(answer) => answer.get("block").cloned(),
+        Value::Int(_) | Value::Str(_) => Some(opened.clone()),
+        _ => None,
+    }
+    .ok_or("tern did not name the browser block")?;
+    let wanted = block_text(&block).ok_or("tern named the browser block oddly")?;
+    // Tern has answered ok without showing a block when opening beside a
+    // split, so the block is looked up before the page counts as shown. A
+    // block that fails the check is closed, so the fallback is the only copy.
+    let listed = tern_browser(Object::new().with("op", "blocks")).inspect_err(|_| close_tern_page(&block))?;
+    let blocks = match &listed {
+        Value::Array(blocks) => blocks.clone(),
+        Value::Object(answer) => answer.get("blocks").and_then(Value::as_array).cloned().unwrap_or_default(),
+        _ => Vec::new(),
+    };
+    if !blocks.iter().any(|b| b.get("block").and_then(block_text).as_deref() == Some(wanted.as_str())) {
+        close_tern_page(&block);
+        return Err("tern answered without opening the page".into());
+    }
+    *TERN_SHOWN.lock().unwrap_or_else(|e| e.into_inner()) = Some(block.clone());
+    Ok(block)
+}
+
+/// The Tern block this process opened, so an early exit can still close it.
+static TERN_SHOWN: Mutex<Option<Value>> = Mutex::new(None);
+
+fn close_tern_page(block: &Value) {
+    let _ = tern_browser(Object::new().with("op", "close").with("block", block.clone()));
+    let mut shown = TERN_SHOWN.lock().unwrap_or_else(|e| e.into_inner());
+    if shown.as_ref() == Some(block) {
+        *shown = None;
+    }
+}
+
+/// Shows a new item where `surface` says. `page` is what Tern shows: the
+/// review page, or the inbox for a question. A failed Rex split or Tern page
+/// falls back to the browser when it is allowed. Returns a Tern block to
+/// close once the item is done.
+fn present(surface: Surface, browser: bool, id: &Value, page: &str, inbox: &str, producer: &str) -> Option<Value> {
+    let failed = |place: &str, error: String| {
+        diag::write(&format!("{producer}: unable to open the review in {place} ({error})\n"));
         if browser {
             html::open_browser(inbox);
         }
+    };
+    match surface {
+        Surface::Rex => {
+            if let Err(error) = open_rex_split(id) {
+                failed("Rex", error);
+            }
+            None
+        }
+        Surface::Tern => match open_tern_page(page) {
+            Ok(block) => Some(block),
+            Err(error) => {
+                failed("Tern", error);
+                None
+            }
+        },
+        Surface::Browser | Surface::Quiet => None,
     }
 }
 
@@ -407,6 +528,10 @@ fn exit_with_parent() {
         thread::sleep(Duration::from_millis(500));
         // SAFETY: getppid has no preconditions.
         if unsafe { libc::getppid() } != parent {
+            let shown = TERN_SHOWN.lock().unwrap_or_else(|e| e.into_inner()).take();
+            if let Some(block) = shown {
+                close_tern_page(&block);
+            }
             std::process::exit(crate::EXIT_ERROR);
         }
     });
@@ -435,9 +560,13 @@ pub fn submit_review(prepared: &Prepared, browser: bool, lifetime: f64, idle: f6
     diag::write(&format!("{}: inbox {inbox}\n", html::PRODUCER));
     let url_file = url_file();
     html::publish_url(url_file.as_deref(), &url);
-    present(surface(browser), browser, reply.get("id").unwrap_or(&Value::Null), &inbox, html::PRODUCER);
+    let id = reply.get("id").unwrap_or(&Value::Null);
+    let shown = present(surface(browser), browser, id, &url, &inbox, html::PRODUCER);
     let message = read_message(&mut reader);
     html::withdraw_url(url_file.as_deref());
+    if let Some(block) = shown {
+        close_tern_page(&block);
+    }
     let stopped = || Error::Other("the senpai service stopped before a decision; no approval was returned".into());
     let Ok(Some(Value::Object(reply))) = message else {
         return Err(stopped());
@@ -1177,12 +1306,18 @@ pub fn ask_main(argv: &[PyStr]) -> i32 {
         Err(error) => return fail(error.message()),
     };
     let question_id = reply.get("question_id").cloned().unwrap_or(Value::Null);
+    let mut shown = None;
     if let Some(inbox) = text_field(&reply, "inbox") {
-        diag::write(&format!("senpai ask: waiting for an answer in the inbox {}\n", inbox.display()));
-        present(surface(browser_allowed()), browser_allowed(), &question_id, &inbox.display(), "senpai ask");
+        let inbox = inbox.display();
+        diag::write(&format!("senpai ask: waiting for an answer in the inbox {inbox}\n"));
+        shown = present(surface(browser_allowed()), browser_allowed(), &question_id, &inbox, &inbox, "senpai ask");
     }
     let _ = reader.get_ref().set_read_timeout(timeout.map(Duration::from_secs));
-    let answer = match read_message(&mut reader) {
+    let message = read_message(&mut reader);
+    if let Some(block) = shown {
+        close_tern_page(&block);
+    }
+    let answer = match message {
         Ok(Some(Value::Object(reply))) => reply.get("answer").cloned().unwrap_or(Value::Null),
         Ok(_) => Value::Null,
         Err(error) if matches!(error.kind(), std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut) => {

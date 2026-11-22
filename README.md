@@ -226,6 +226,16 @@ with nothing waiting.
 - **Files.** `~/Library/Application Support/senpai/` (mode 0700): `senpai.sock`, `serve.lock`, `serve.log`. `SENPAI_HOME` moves them; a Unix socket path must stay under 104 bytes. `SENPAI_SERVE_IDLE` sets the idle exit in seconds.
 - **Updates.** After `cargo install`, an idle service from the old build restarts on the next request. One with items still waiting keeps running, and new requests fail until those items finish or you run `senpai serve --stop`.
 
+### Tern
+
+When an agent runs in a Tern pane (`TERN_PANE` is set), each new review opens the
+real review page in a Tern browser block docked beside that pane, with the same
+HTML, CSS and mouse support as the browser; a question opens the inbox there.
+The block closes once the item is decided or its agent goes away. If Tern can't
+show it, the item still waits in the inbox and the browser opens instead. Tern
+and Rex panes open even with `HTML_REVIEW_NO_BROWSER=1`; use
+`SENPAI_SURFACE=none` to turn them off.
+
 ### Terminal and Rex
 
 `senpai tui` shows the inbox in a terminal and works with keys or the mouse:
@@ -235,7 +245,7 @@ for confirmation first. `senpai tui --item ID` opens one item and exits once it
 is decided, here or in the browser. Press `?` for all keys.
 
 - **Inside Rex.** When an agent runs in a Rex pane (`REX_SESSION` and `REX_BLOCK` are set), each new review or question opens `senpai tui --item ID` in a split beside that pane instead of a browser tab. The split closes after the decision. If the split fails, the item still waits in the inbox and the browser opens instead.
-- **`SENPAI_SURFACE`** chooses where new items appear: `auto` (default), `browser`, `rex` or `none`.
+- **`SENPAI_SURFACE`** chooses where new items appear: `auto` (default: Tern inside Tern, Rex inside Rex, else the browser), `browser`, `tern`, `rex` or `none`.
 - **Same checks.** The terminal sends decisions to the service, which checks them exactly like the page's. Document reviews show the markdown source lines, so comments land on the same lines. The Guided tab and syntax colors stay in the browser.
 
 ### Privacy and trust
@@ -244,6 +254,7 @@ is decided, here or in the browser. Press `?` for all keys.
 | --- | --- |
 | Browser | `127.0.0.1`, session token, same-origin JS/fonts; **keep the URL private** |
 | Inbox | Private directory and socket; client and service each refuse a peer run by another user; every review and the inbox page have their own random token |
+| Tern | The page opens in a browser block the agent's own `tern browser` commands can drive, so an agent could click it; like the URL itself, this is not a barrier against a local agent |
 | Data | Local by default, accessible to unrestricted local processes; custom reviewers must be trusted |
 | Ledger | `task-review-approval.jsonl` in Git metadata; document reviews use their resolved context; contains criteria, paths, comments/decisions |
 | Private files | Never commit ledgers, live URLs, sessions or scanner reports; never delete ledgers as retry cleanup |
@@ -262,7 +273,7 @@ node --test tests/test_diff_view.js
 The Python suite drives the release binary as a black box (`SENPAI_BINARY`
 overrides it). It turns the inbox off for every process it starts, except
 `tests/test_inbox.py`, which runs its own service in a private `SENPAI_HOME`,
-and hides any Rex session it runs in; the Rex split is tested with a fake `rex`. `tests/test_rust_parity.py` also compares it with the last Python
+and hides any Rex or Tern session it runs in; Rex and Tern are tested with fake `rex` and `tern` commands. `tests/test_rust_parity.py` also compares it with the last Python
 client, extracted from git history. Golden cases recorded from that client live
 in `tests/golden/` and are replayed by `cargo test`.
 

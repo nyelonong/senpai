@@ -523,6 +523,97 @@ class TerminalSurfaceTest(InboxCase):
         self.assertEqual(len(self.rex_calls(record)), 1)
         process.kill()
 
+    def fake_tern(self, mode: str = "ok") -> Path:
+        """A `tern` that records each browser op and answers like Tern does."""
+        bin_dir = self.temp / "bin"
+        bin_dir.mkdir(exist_ok=True)
+        record = self.temp / "tern-ops"
+        tern = bin_dir / "tern"
+        tern.write_text(f"""#!{sys.executable} -I
+import json, sys
+op = json.loads(sys.argv[2])
+with open({str(record)!r}, "a") as log:
+    log.write(json.dumps(op) + "\\n")
+mode = {mode!r}
+if mode == "error":
+    print(json.dumps({{"error": {{"kind": "no_window", "message": "no Tern window is open"}}}}))
+    sys.exit(1)
+if op["op"] == "open":
+    print(json.dumps({{"ok": {{"block": 42, "url": op["url"]}}}}))
+elif op["op"] == "blocks":
+    blocks = [] if mode == "phantom" else [{{"block": 42, "url": "x", "shown": True}}]
+    print(json.dumps({{"ok": {{"blocks": blocks}}}}))
+else:
+    print(json.dumps({{"ok": {{}}}}))
+""")
+        tern.chmod(0o755)
+        self.env["PATH"] = f"{bin_dir}{os.pathsep}{self.env['PATH']}"
+        self.env["TERN_PANE"] = "1234"
+        return record
+
+    def tern_ops(self, record: Path) -> list[dict]:
+        return [json.loads(line) for line in record.read_text().splitlines()] if record.exists() else []
+
+    def test_review_page_opens_beside_the_agent_in_tern_and_closes_after(self) -> None:
+        record = self.fake_tern()
+        process, url = self.review(self.repo("one"))
+        ops = wait_for(lambda: len(self.tern_ops(record)) >= 2 and self.tern_ops(record), message="the tern page")
+        self.assertEqual(ops[0], {"op": "open", "owner": 1234, "url": url, "how": "beside"})
+        self.assertEqual(ops[1], {"op": "blocks"})
+        self.assertEqual(post(url + "api/decision", {"decision": "approve", "annotations": []}), 204)
+        code, _, err = self.finish(process)
+        self.assertEqual(code, commands.EXIT_OK, err)
+        self.assertEqual(self.tern_ops(record)[-1], {"op": "close", "block": 42})
+
+    def test_tern_wins_over_rex_and_surface_can_choose(self) -> None:
+        tern = self.fake_tern()
+        rex = self.fake_rex()
+        process, _ = self.review(self.repo("one"))
+        wait_for(lambda: self.tern_ops(tern), message="the tern page")
+        self.assertEqual(self.rex_calls(rex), [])
+        process.kill()
+        process.communicate()
+        self.env[commands.SURFACE_ENV] = "rex"
+        process, _ = self.review(self.repo("two"))
+        wait_for(lambda: self.rex_calls(rex), message="the rex split")
+        self.assertEqual(len([op for op in self.tern_ops(tern) if op["op"] == "open"]), 1)
+        process.kill()
+        process.communicate()
+
+    def test_failed_or_phantom_tern_page_leaves_the_review_waiting(self) -> None:
+        for mode, reason in (("error", "no Tern window is open"), ("phantom", "tern answered without opening the page")):
+            with self.subTest(mode=mode):
+                record = self.fake_tern(mode)
+                record.unlink(missing_ok=True)
+                url_file = self.temp / f"{mode}.url"
+                process = self.start(["review", "--criterion", "ship it", "--repo", str(self.repo(mode))], url_file)
+                wait_for(lambda: self.tern_ops(record), message="the tern call")
+                time.sleep(0.5)
+                self.assertIsNone(process.poll())
+                process.kill()
+                _, err = process.communicate()
+                self.assertIn(f"unable to open the review in Tern ({reason}", err.decode())
+                closes = [op for op in self.tern_ops(record) if op["op"] == "close"]
+                self.assertEqual(closes, [] if mode == "error" else [{"op": "close", "block": 42}],
+                                 "a page that failed the check is closed")
+
+    def test_killed_client_closes_the_tern_page(self) -> None:
+        record = self.fake_tern()
+        process, _ = self.review(self.repo("one"))
+        wait_for(lambda: len(self.tern_ops(record)) >= 2, message="the tern page")
+        process.kill()
+        process.communicate()
+        wait_for(lambda: self.tern_ops(record)[-1] == {"op": "close", "block": 42}, message="the page to close")
+
+    def test_question_shows_the_inbox_in_tern(self) -> None:
+        record = self.fake_tern()
+        process, inbox, item = self.ask("--question", "Ready?")
+        ops = wait_for(lambda: self.tern_ops(record), message="the tern page")
+        self.assertEqual(ops[0]["url"], inbox)
+        self.assertEqual(post(inbox + "api/answer", {"id": item["id"], "text": "yes"}), 204)
+        self.assertEqual(self.finish(process)[0], commands.EXIT_OK)
+        self.assertEqual(self.tern_ops(record)[-1], {"op": "close", "block": 42})
+
     def test_tui_needs_a_terminal(self) -> None:
         result = subprocess.run([commands.BINARY, "tui"], env=self.env, capture_output=True, stdin=subprocess.DEVNULL,
                                 timeout=10)
