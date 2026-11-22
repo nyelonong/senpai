@@ -27,7 +27,7 @@ agent ──→ senpai ──→ git diff or document ──→ local browser �
 ```
 
 - One Rust binary plus Git and a local browser. The page, its scripts and fonts are built in; no Python, Node, editor or agent runtime needed.
-- Works with Claude Code, Codex, Pi and Gemini through its agent skill, or by hand from any shell.
+- Works with Claude Code, Codex, Pi and Antigravity through its agent skill, or by hand from any shell.
 
 ## 入門 · Install
 
@@ -307,7 +307,7 @@ verify/consume. When a review runs and which model runs it is your workflow's
 policy, not this skill's.
 
 ```sh
-"$SENPAI" skill install   # link it for Claude, ~/.agents, Pi and Codex; copy it for Gemini
+"$SENPAI" skill install   # link it for Claude, ~/.agents, Pi and Codex; copy it for Antigravity (~/.gemini/config)
 "$SENPAI" skill check     # linked, stale, missing, foreign or skipped, per agent
 "$SENPAI" skill remove    # remove only senpai's own links and copies
 ```
