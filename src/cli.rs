@@ -37,6 +37,7 @@ fn repository_options(paths: bool, required: bool) -> Vec<OptionSpec> {
     }
     out.push(opt("--base", "REF", "review changes since the merge base with REF (single --repo only)"));
     out.push(opt("--head", "REF", "end the reviewed range at commit REF instead of the working tree (needs --base)"));
+    out.push(opt("--pr", "N|URL", "review a GitHub pull request's commits, resolved with gh (single --repo only)"));
     out.push(opt("--json", "REQUEST", "a complete ReviewRequest JSON document"));
     out
 }

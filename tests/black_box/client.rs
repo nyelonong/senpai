@@ -314,6 +314,12 @@ pub const TESTS: &[(&str, fn())] = &[
     ("range_reads_pathspec_like_names_literally", range_reads_pathspec_like_names_literally),
     ("range_scope_keeps_renames_out_of_scope", range_scope_keeps_renames_out_of_scope),
     ("range_shows_ignored_submodule_changes_and_deletions", range_shows_ignored_submodule_changes_and_deletions),
+    // PullRequestTests
+    ("pr_review_approves_verifies_and_shows_the_pull_request", pr_review_approves_verifies_and_shows_the_pull_request),
+    ("pr_head_moving_during_review_denies_approval", pr_head_moving_during_review_denies_approval),
+    ("pr_head_moving_after_approval_fails_verify", pr_head_moving_after_approval_fails_verify),
+    ("pr_gh_failing_after_the_decision_denies_approval", pr_gh_failing_after_the_decision_denies_approval),
+    ("pr_missing_commits_gh_failures_and_bad_flags_fail_closed", pr_missing_commits_gh_failures_and_bad_flags_fail_closed),
 ];
 
 // ---------------------------------------------------------------------------
@@ -2584,11 +2590,23 @@ fn feature_case() -> Case {
     case
 }
 
+/// Runs `review` with `args` through the bundled page, runs `during` once the
+/// page is up, approves there and returns the finished client.
+fn html_review(case: &Case, args: &[&str], extra: Env, during: impl FnOnce()) -> Run {
+    let root = s(&case.root);
+    let mut all = vec!["review", "--criterion", "ship it", "--repo", &root];
+    all.extend_from_slice(args);
+    let (process, url) = case.start_html(senpai(all), extra);
+    during();
+    decide(&url, "approve");
+    process.communicate(30)
+}
+
 fn range_fingerprint(case: &Case, range: &[&str]) -> String {
     let root = s(&case.root);
     let mut args = vec!["preflight", "--criterion", "ship it", "--repo", &root];
     args.extend_from_slice(range);
-    let result = case.run_client(&args, &[]);
+    let result = case.run_client(&args, &[(REVIEWER_ENV, Some("html"))]);
     assert_eq!(result.code, EXIT_OK, "{}", result.stderr);
     single_json_line(&result)["fingerprint"].as_str().expect("a fingerprint").to_string()
 }
@@ -2621,7 +2639,7 @@ fn base_review_includes_committed_and_uncommitted_changes() {
 fn base_approval_verifies_only_with_the_same_base() {
     let case = feature_case();
     case.write("a.py", "print('three')\n");
-    let result = case.review(&["--base", "main"], &[]);
+    let result = html_review(&case, &["--base", "main"], &[], || {});
     assert_eq!(result.code, EXIT_OK, "{}", result.stderr);
     let entry = case.entries().last().expect("entry").clone();
     assert_eq!(entry["state"], json!("approved"));
@@ -2649,7 +2667,7 @@ fn head_review_ignores_the_working_tree() {
     assert_eq!(a["text"], json!("print('two')\n"), "content comes from the head commit");
     let feature = git(&case.root, &["rev-parse", "feature"]).trim().to_string();
     assert_eq!(served["range"]["head_commit"], json!(feature));
-    let result = case.review(&range, &[]);
+    let result = html_review(&case, &range, &[], || {});
     assert_eq!(result.code, EXIT_OK, "{}", result.stderr);
     let root = s(&case.root);
     let mut verify = vec!["verify", "--repo", root.as_str()];
@@ -2662,13 +2680,10 @@ fn head_review_ignores_the_working_tree() {
 
 fn head_moving_during_review_denies_approval() {
     let case = feature_case();
-    let root = s(&case.root);
     let main = git(&case.root, &["rev-parse", "main"]).trim().to_string();
-    let move_head = ["-C", root.as_str(), "update-ref", "refs/heads/feature", main.as_str()].join("\t");
-    let result = case.review(
-        &["--base", "main", "--head", "feature"],
-        &[("STUB_MODE", Some("git")), ("STUB_GIT", Some(&move_head))],
-    );
+    let result = html_review(&case, &["--base", "main", "--head", "feature"], &[], || {
+        git(&case.root, &["update-ref", "refs/heads/feature", &main]);
+    });
     case.assert_no_approval(&result);
     assert!(result.stderr.contains("changed while the human was deciding"), "{}", result.stderr);
 }
@@ -2700,10 +2715,10 @@ fn range_usage_errors_and_unknown_revisions_fail_closed() {
 fn base_moving_during_review_denies_approval() {
     let case = feature_case();
     case.write("a.py", "print('three')\n");
-    let root = s(&case.root);
     let feature = git(&case.root, &["rev-parse", "feature"]).trim().to_string();
-    let move_base = ["-C", root.as_str(), "update-ref", "refs/heads/main", feature.as_str()].join("\t");
-    let result = case.review(&["--base", "main"], &[("STUB_MODE", Some("git")), ("STUB_GIT", Some(&move_base))]);
+    let result = html_review(&case, &["--base", "main"], &[], || {
+        git(&case.root, &["update-ref", "refs/heads/main", &feature]);
+    });
     case.assert_no_approval(&result);
     assert!(result.stderr.contains("changed while the human was deciding"), "{}", result.stderr);
 }
@@ -2767,4 +2782,182 @@ fn range_shows_ignored_submodule_changes_and_deletions() {
     assert_eq!(a["status"], json!("deleted"));
     let sub = files.iter().find(|f| f["path"] == json!("sub")).expect("sub");
     assert!(added_lines(sub).iter().any(|l| l.contains(&feature)), "{sub}");
+}
+
+// ---------------------------------------------------------------------------
+// PullRequestTests
+// ---------------------------------------------------------------------------
+
+/// A feature case with a fake `gh` on `PATH` that reports pull request #12
+/// from `main` to `feature`.
+struct PrCase {
+    case: Case,
+    path: String,
+    answer: PathBuf,
+}
+
+fn pr_json(case: &Case, head: &str) -> String {
+    let main = git(&case.root, &["rev-parse", "main"]).trim().to_string();
+    json!({
+        "number": 12, "url": "https://github.com/o/r/pull/12", "title": "Change the output",
+        "body": "Prints **two** now.", "baseRefName": "main", "baseRefOid": main,
+        "headRefName": "feature", "headRefOid": head,
+        "commits": [{"oid": head, "messageHeadline": "feature work", "authors": [{"login": "ana", "name": "Ana"}]}],
+    })
+    .to_string()
+}
+
+impl PrCase {
+    fn new() -> Self {
+        let case = feature_case();
+        let bin = case.base.join("bin");
+        std::fs::create_dir_all(&bin).expect("mkdir");
+        crate::fakes::install(&bin, "gh", "gh", &[]);
+        let path = format!("{}:{}", s(&bin), std::env::var("PATH").unwrap_or_default());
+        let answer = case.base.join("gh-answer.json");
+        let head = git(&case.root, &["rev-parse", "feature"]).trim().to_string();
+        write(&answer, &pr_json(&case, &head));
+        PrCase { case, path, answer }
+    }
+
+    fn run(&self, args: &[&str], extra: Env) -> Run {
+        let answer = s(&self.answer);
+        let mut settings: Vec<(&str, Option<&str>)> = vec![("PATH", Some(&self.path)), ("FAKE_GH_JSON", Some(&answer))];
+        settings.extend_from_slice(extra);
+        self.case.run_client(args, &settings)
+    }
+
+    /// A review that is expected to fail before any page opens.
+    fn failing_review(&self) -> Run {
+        let root = s(&self.case.root);
+        self.run(
+            &["review", "--criterion", "ship it", "--repo", &root, "--pr", "12"],
+            &[(REVIEWER_ENV, Some("html")), (NO_BROWSER_ENV, Some("1"))],
+        )
+    }
+
+    /// A review approved through the bundled page, with `during` run once the
+    /// page is up.
+    fn review(&self, during: impl FnOnce()) -> Run {
+        let answer = s(&self.answer);
+        html_review(&self.case, &["--pr", "12"], &[("PATH", Some(&self.path)), ("FAKE_GH_JSON", Some(&answer))], during)
+    }
+
+    fn verify(&self) -> Run {
+        let root = s(&self.case.root);
+        self.run(&["verify", "--repo", &root, "--pr", "12"], &[])
+    }
+
+    /// Commits more work on a side branch and returns an answer file whose
+    /// head is that commit, as if someone pushed to the pull request.
+    fn pushed_answer(&self) -> PathBuf {
+        let root = &self.case.root;
+        git(root, &["checkout", "-q", "-b", "pushed"]);
+        self.case.write("pushed.txt", "pushed later\n");
+        self.case.commit("pushed");
+        let head = git(root, &["rev-parse", "pushed"]).trim().to_string();
+        git(root, &["checkout", "-q", "feature"]);
+        let pushed = self.case.base.join("gh-pushed.json");
+        write(&pushed, &pr_json(&self.case, &head));
+        pushed
+    }
+}
+
+fn pr_review_approves_verifies_and_shows_the_pull_request() {
+    let pr = PrCase::new();
+    let result = pr.review(|| {});
+    assert_eq!(result.code, EXIT_OK, "{}", result.stderr);
+    let entry = pr.case.entries().last().expect("entry").clone();
+    assert_eq!(entry["state"], json!("approved"));
+    assert_eq!(entry["repositories"][0]["pr"], json!("12"));
+    assert_eq!(pr.verify().code, EXIT_OK);
+    assert_eq!(pr.case.verify(&[]).code, EXIT_NOT_APPROVED, "a working-tree review is a different range");
+    pr.case.write("a.py", "print('uncommitted')\n");
+    assert_eq!(pr.verify().code, EXIT_OK, "the working tree is not part of a pull request review");
+    let root = s(&pr.case.root);
+    let by_url = pr.run(&["verify", "--repo", &root, "--pr", "https://github.com/o/r/pull/12"], &[]);
+    assert_eq!(by_url.code, EXIT_OK, "{}", by_url.stderr);
+    let other_reviewer = pr.run(
+        &["review", "--criterion", "ship it", "--repo", &root, "--pr", "12"],
+        &[(REVIEWER_ENV, Some("rdg"))],
+    );
+    assert_eq!(other_reviewer.code, EXIT_ERROR, "{}", other_reviewer.stderr);
+    assert!(other_reviewer.stderr.contains("require TASK_REVIEW_REVIEWER=html"), "{}", other_reviewer.stderr);
+    assert_eq!(pr.verify().code, EXIT_NOT_APPROVED, "starting a review retires the previous approval");
+
+    let answer = s(&pr.answer);
+    let request = json!({"version": "1", "review_id": "pr", "criterion": "ship it",
+                         "repositories": [{"root": s(&pr.case.root), "pr": 12}]});
+    let (process, url) = pr.case.start_html(
+        reviewer(["--review".to_string(), request.to_string()]),
+        &[("PATH", Some(&pr.path)), ("FAKE_GH_JSON", Some(&answer))],
+    );
+    let repository = served(&url)["repositories"][0].clone();
+    decide(&url, "cancelled");
+    process.communicate(30);
+    assert_eq!(paths_of(repository["files"].as_array().expect("files")), ["a.py", "other/b.txt", "untracked.txt"]);
+    let shown = &repository["range"]["pull_request"];
+    assert_eq!(shown["number"], json!(12));
+    assert_eq!(shown["title"], json!("Change the output"));
+    assert_eq!(shown["body"], json!("Prints **two** now."));
+    assert_eq!(shown["commits"][0]["author"], json!("ana"));
+    assert_eq!(repository["range"]["base"], json!("main"));
+}
+
+fn pr_head_moving_during_review_denies_approval() {
+    let pr = PrCase::new();
+    let pushed = pr.pushed_answer();
+    let result = pr.review(|| {
+        std::fs::copy(&pushed, &pr.answer).expect("copy");
+    });
+    pr.case.assert_no_approval(&result);
+    assert!(result.stderr.contains("changed while the human was deciding"), "{}", result.stderr);
+    assert_eq!(pr.verify().code, EXIT_NOT_APPROVED);
+}
+
+fn pr_head_moving_after_approval_fails_verify() {
+    let pr = PrCase::new();
+    assert_eq!(pr.review(|| {}).code, EXIT_OK);
+    assert_eq!(pr.verify().code, EXIT_OK);
+    std::fs::copy(pr.pushed_answer(), &pr.answer).expect("copy");
+    assert_eq!(pr.verify().code, EXIT_NOT_APPROVED);
+    std::fs::remove_file(&pr.answer).expect("remove");
+    let offline = pr.verify();
+    assert_eq!(offline.code, EXIT_ERROR, "{}", offline.stderr);
+    assert_eq!(offline.stdout, "");
+}
+
+fn pr_gh_failing_after_the_decision_denies_approval() {
+    let pr = PrCase::new();
+    let result = pr.review(|| write(&pr.answer, "not json"));
+    pr.case.assert_no_approval(&result);
+    assert!(result.stderr.contains("invalid pull request"), "{}", result.stderr);
+}
+
+fn pr_missing_commits_gh_failures_and_bad_flags_fail_closed() {
+    let pr = PrCase::new();
+    let root = s(&pr.case.root);
+    write(&pr.answer, &pr_json(&pr.case, &"e".repeat(40)));
+    let missing = pr.failing_review();
+    assert_eq!(missing.code, EXIT_ERROR, "{}", missing.stderr);
+    assert!(missing.stderr.contains("git fetch origin pull/12/head"), "{}", missing.stderr);
+    write(&pr.answer, "{\"number\": 12}");
+    let malformed = pr.failing_review();
+    assert_eq!(malformed.code, EXIT_ERROR, "{}", malformed.stderr);
+    std::fs::remove_file(&pr.answer).expect("remove");
+    let offline = pr.failing_review();
+    assert_eq!(offline.code, EXIT_ERROR, "{}", offline.stderr);
+    assert!(offline.stderr.contains("gh pr view 12 failed"), "{}", offline.stderr);
+    let cases: Vec<(&str, Vec<&str>)> = vec![
+        ("pr with base", vec!["review", "--criterion", "x", "--repo", &root, "--pr", "12", "--base", "main"]),
+        ("not a pr", vec!["review", "--criterion", "x", "--repo", &root, "--pr", "abc"]),
+        ("option-like pr", vec!["review", "--criterion", "x", "--repo", &root, "--pr=--web"]),
+        ("json with pr", vec!["review", "--json", "{}", "--pr", "12"]),
+    ];
+    for (label, argv) in cases {
+        let result = pr.run(&argv, &[]);
+        assert_eq!(result.code, EXIT_ERROR, "case={label}: {}", result.stderr);
+        assert_eq!(result.stdout, "", "case={label}");
+    }
+    assert!(!pr.case.states().contains(&json!("approved")));
 }

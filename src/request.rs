@@ -14,6 +14,7 @@ pub struct Repository {
     pub paths: Option<Vec<PyStr>>,
     pub base: Option<String>,
     pub head: Option<String>,
+    pub pr: Option<String>,
 }
 
 impl Repository {
@@ -27,6 +28,9 @@ impl Repository {
         }
         if let Some(head) = &self.head {
             object.insert("head", Value::from(head.as_str()));
+        }
+        if let Some(pr) = &self.pr {
+            object.insert("pr", Value::from(pr.as_str()));
         }
         Value::Object(object)
     }
@@ -180,6 +184,34 @@ pub fn normalize_revision(value: Option<&Value>, name: &str) -> Result<Option<St
     Ok(Some(String::from_utf8_lossy(bytes).into_owned()))
 }
 
+fn is_name(part: &[u8]) -> bool {
+    !part.is_empty() && part[0] != b'-' && part.iter().all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'-'))
+}
+
+fn is_pr_number(text: &[u8]) -> bool {
+    (1..=10).contains(&text.len()) && text[0] != b'0' && text.iter().all(u8::is_ascii_digit)
+}
+
+/// Validates an optional pull request: a number, or an
+/// `https://HOST/OWNER/REPO/pull/NUMBER` URL, the two forms `gh pr view` takes.
+pub fn normalize_pr(value: Option<&Value>) -> Result<Option<String>> {
+    let text = match value {
+        None | Some(Value::Null) => return Ok(None),
+        Some(Value::Int(n)) => n.to_string(),
+        Some(Value::Str(s)) => String::from_utf8_lossy(s.as_wtf8()).into_owned(),
+        Some(_) => return Err(result_error("repository pr must be a number or a pull request URL")),
+    };
+    let bytes = text.as_bytes();
+    let url = text.strip_prefix("https://").map(|rest| rest.as_bytes().split(|&b| b == b'/').collect::<Vec<_>>());
+    let valid = is_pr_number(bytes)
+        || matches!(url.as_deref(), Some([host, owner, repo, b"pull", number])
+            if is_name(host) && is_name(owner) && is_name(repo) && is_pr_number(number));
+    if !valid {
+        return Err(result_error(format!("repository pr must be a number or a pull request URL: {text:?}")));
+    }
+    Ok(Some(text))
+}
+
 pub fn normalize_repository(value: &Value) -> Result<Repository> {
     let Some(object) = value.as_object() else {
         return Err(result_error("each repository must be an object"));
@@ -188,7 +220,7 @@ pub fn normalize_repository(value: &Value) -> Result<Repository> {
         return Err(result_error("each repository needs a root path"));
     }
     let mut unknown: Vec<&PyStr> =
-        object.keys().filter(|k| !["root", "paths", "base", "head"].iter().any(|known| k == known)).collect();
+        object.keys().filter(|k| !["root", "paths", "base", "head", "pr"].iter().any(|known| k == known)).collect();
     if !unknown.is_empty() {
         unknown.sort();
         let names: Vec<String> = unknown.iter().map(|k| k.display()).collect();
@@ -199,11 +231,16 @@ pub fn normalize_repository(value: &Value) -> Result<Repository> {
     if head.is_some() && base.is_none() {
         return Err(result_error("a repository head needs a base"));
     }
+    let pr = normalize_pr(object.get("pr"))?;
+    if pr.is_some() && base.is_some() {
+        return Err(result_error("a repository pr cannot be combined with base or head"));
+    }
     Ok(Repository {
         root: normalize_root(object.get("root"))?,
         paths: normalize_paths(object.get("paths"))?,
         base,
         head,
+        pr,
     })
 }
 
@@ -389,16 +426,25 @@ pub fn parse_request_json(text: &PyStr, require_review_fields: bool) -> Result<R
     normalize_request(&payload, require_review_fields)
 }
 
-pub fn scoped_repositories(
-    roots: &[PyStr],
-    paths: &Option<Vec<PyStr>>,
-    base: &Option<String>,
-    head: &Option<String>,
-) -> Result<Vec<Repository>> {
+/// The revisions a command line selects; every one applies to a single root.
+#[derive(Clone, Debug, Default)]
+pub struct Revisions {
+    pub base: Option<String>,
+    pub head: Option<String>,
+    pub pr: Option<String>,
+}
+
+pub fn scoped_repositories(roots: &[PyStr], paths: &Option<Vec<PyStr>>, revisions: &Revisions) -> Result<Vec<Repository>> {
     roots
         .iter()
         .map(|root| {
-            Ok(Repository { root: normalize_root_str(root)?, paths: paths.clone(), base: base.clone(), head: head.clone() })
+            Ok(Repository {
+                root: normalize_root_str(root)?,
+                paths: paths.clone(),
+                base: revisions.base.clone(),
+                head: revisions.head.clone(),
+                pr: revisions.pr.clone(),
+            })
         })
         .collect()
 }
@@ -487,6 +533,16 @@ mod tests {
         for good in ["main", "origin/main", "HEAD~3", "v1.0^", "a1b2c3"] {
             assert_eq!(normalize_revision(Some(&Value::str(good)), "base").unwrap().as_deref(), Some(good));
         }
+        for good in ["7", "1234567890", "https://github.com/o/r/pull/12", "https://ghe.example.com/my-org/re.po/pull/3"] {
+            assert_eq!(normalize_pr(Some(&Value::str(good))).unwrap().as_deref(), Some(good));
+        }
+        assert_eq!(normalize_pr(Some(&Value::Int(42))).unwrap().as_deref(), Some("42"));
+        for bad in ["", "0", "07", "-1", "12345678901", "http://github.com/o/r/pull/1", "https://github.com/o/r/issues/1",
+            "https://github.com/o/r/pull/1/files", "https://github.com/-o/r/pull/1", "--repo=x"] {
+            assert!(normalize_pr(Some(&Value::str(bad))).is_err(), "{bad:?}");
+        }
+        let mixed = json::loads_str(r#"{"root":"/","pr":"1","base":"main"}"#).unwrap();
+        assert_eq!(normalize_repository(&mixed).unwrap_err().message(), "a repository pr cannot be combined with base or head");
         let head_only = json::loads_str(r#"{"root":"/","head":"main"}"#).unwrap();
         assert_eq!(normalize_repository(&head_only).unwrap_err().message(), "a repository head needs a base");
     }

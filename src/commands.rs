@@ -47,6 +47,12 @@ impl Launcher for ProcessLauncher {
 }
 
 pub fn review_snapshot(git: &dyn Git, request: &ReviewRequest, launcher: &str) -> Result<Snapshot> {
+    // Other reviewers read only the working tree, so they would show a
+    // different diff from the range this approval would cover.
+    let ranged = request.repositories.iter().any(|r| r.base.is_some() || r.pr.is_some());
+    if ranged && launcher != HTML_REVIEWER {
+        return Err(Error::Usage("range and pull request reviews require TASK_REVIEW_REVIEWER=html".into()));
+    }
     let snapshot = collect_snapshot(git, &request.repositories)?;
     if let Some(guide) = &request.guide {
         if launcher != HTML_REVIEWER {

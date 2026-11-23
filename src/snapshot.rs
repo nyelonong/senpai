@@ -13,6 +13,7 @@ use sha2::{Digest, Sha256};
 
 use crate::error::{Error, Result};
 use crate::git::{self, Git};
+use crate::github::PullRequest;
 use crate::os;
 use crate::pystr::PyStr;
 use crate::request::{encode_path, Repository};
@@ -323,6 +324,7 @@ pub struct Range {
     pub baseline: String,
     pub head: Option<String>,
     pub from_base: bool,
+    pub pull_request: Option<PullRequest>,
 }
 
 fn is_object_id(text: &str) -> bool {
@@ -358,7 +360,10 @@ fn merge_base(git: &dyn Git, root: &[u8], base: &str, head: &str) -> Result<Stri
 /// diff uses; a revision that does not resolve is an error.
 pub fn resolve_range(git: &dyn Git, root: &[u8], repository: &Repository) -> Result<Range> {
     let Some(base) = &repository.base else {
-        return Ok(Range { baseline: resolve_baseline(git, root)?, head: None, from_base: false });
+        if let Some(pr) = &repository.pr {
+            return resolve_pull_request(git, root, pr);
+        }
+        return Ok(Range { baseline: resolve_baseline(git, root)?, head: None, from_base: false, pull_request: None });
     };
     let base = resolve_commit(git, root, base)?;
     let head = match &repository.head {
@@ -369,7 +374,30 @@ pub fn resolve_range(git: &dyn Git, root: &[u8], repository: &Repository) -> Res
         Some(head) => head.clone(),
         None => resolve_commit(git, root, "HEAD")?,
     };
-    Ok(Range { baseline: merge_base(git, root, &base, &tip)?, head, from_base: true })
+    Ok(Range { baseline: merge_base(git, root, &base, &tip)?, head, from_base: true, pull_request: None })
+}
+
+/// A pull request is the range from its base commit to its head commit, as
+/// `gh` reports them now. Both commits must already be local: senpai never
+/// fetches, so a missing one is an error that names the fetch to run.
+fn resolve_pull_request(git: &dyn Git, root: &[u8], pr: &str) -> Result<Range> {
+    let pull_request = crate::github::view(root, pr)?;
+    let local = |oid: &str| {
+        resolve_commit(git, root, oid).map_err(|_| {
+            Error::Git(format!(
+                "commit {oid} of pull request #{} is not in this repository; fetch it first, for example: git fetch origin pull/{}/head {}",
+                pull_request.number, pull_request.number, pull_request.base_ref.display()
+            ))
+        })
+    };
+    let base = local(&pull_request.base_oid)?;
+    let head = local(&pull_request.head_oid)?;
+    Ok(Range {
+        baseline: merge_base(git, root, &base, &head)?,
+        head: Some(head),
+        from_base: true,
+        pull_request: Some(pull_request),
+    })
 }
 
 /// Parses `git diff --raw -z --no-abbrev` records into ordered entries.
@@ -420,7 +448,7 @@ pub fn parse_raw_diff(data: &[u8]) -> Result<Vec<StatusEntry>> {
 /// fingerprints stay as they were, and a raw diff from the baseline when a
 /// base is given, so committed changes are included.
 pub fn range_entries(git: &dyn Git, repository: &Repository, range: &Range) -> Result<Vec<StatusEntry>> {
-    if repository.base.is_none() {
+    if !range.from_base {
         return selected_entries(git, repository);
     }
     let root = repository.root_bytes()?;

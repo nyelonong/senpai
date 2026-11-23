@@ -299,15 +299,18 @@ fn collect_file_diffs(git: &dyn Git, repository: &Repository, range: &Range) -> 
 /// The revisions a range review compares, for the page to name; absent for a
 /// working-tree review against `HEAD`.
 fn range_payload(repository: &Repository, range: &Range) -> Value {
-    let Some(base) = &repository.base else {
-        return Value::Null;
+    let (base, head) = match (&range.pull_request, &repository.base) {
+        (Some(pr), _) => (Value::from(&pr.base_ref), Value::from(&pr.head_ref)),
+        (None, Some(base)) => (Value::from(base.as_str()), repository.head.as_deref().map(Value::from).unwrap_or(Value::Null)),
+        (None, None) => return Value::Null,
     };
     Value::Object(
         Object::new()
-            .with("base", base.as_str())
-            .with("head", repository.head.as_deref().map(Value::from).unwrap_or(Value::Null))
+            .with("base", base)
+            .with("head", head)
             .with("baseline", range.baseline.as_str())
-            .with("head_commit", range.head.as_deref().map(Value::from).unwrap_or(Value::Null)),
+            .with("head_commit", range.head.as_deref().map(Value::from).unwrap_or(Value::Null))
+            .with("pull_request", range.pull_request.as_ref().map(|pr| pr.payload()).unwrap_or(Value::Null)),
     )
 }
 

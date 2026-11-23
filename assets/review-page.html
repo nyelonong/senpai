@@ -115,10 +115,18 @@ header{padding:16px 22px 10px; min-height:0; max-height:34vh; overflow:auto}
 #repos{display:contents}
 #repos li,.docpath{overflow-wrap:anywhere}
 #review-id{color:var(--faint); font-size:12px}
-#review-brief{margin-top:8px}
-#review-brief summary{cursor:pointer; color:var(--muted); font-size:13px; font-weight:700; width:fit-content}
-#criterion{max-width:90ch; margin-top:8px; white-space:pre-wrap; overflow-wrap:anywhere; line-height:1.6;
+#review-brief,#pull-request{margin-top:8px}
+#review-brief summary,#pull-request summary{cursor:pointer; color:var(--muted); font-size:13px; font-weight:700; width:fit-content}
+#criterion,#pr-body,#pr-commits{max-width:90ch; margin-top:8px; overflow-wrap:anywhere; line-height:1.6;
   background:var(--surface); border:1px solid var(--line); border-radius:10px; padding:12px 14px}
+#criterion{white-space:pre-wrap}
+#pr-body > :first-child{margin-top:0}
+#pr-body > :last-child{margin-bottom:0}
+#pr-body ul{list-style:disc; padding-left:22px}
+#pr-body ol{list-style:decimal; padding-left:22px}
+#pr-commits{list-style:none; font:12px/1.6 var(--mono)}
+#pr-commits code{color:var(--faint); margin-right:8px}
+#pr-commits .author{color:var(--muted); margin-left:8px}
 .chips{display:flex; gap:6px; align-items:center; flex-wrap:wrap}
 .chip{
   display:inline-flex; align-items:center; gap:4px; padding:2px 10px; border-radius:999px;
@@ -515,6 +523,11 @@ body.document .doc b{font-weight:800} body.document .doc i{font-style:italic} bo
     <summary>Review brief</summary>
     <div id="criterion"></div>
   </details>
+  <details id="pull-request" hidden>
+    <summary id="pr-summary"></summary>
+    <div id="pr-body"></div>
+    <ol id="pr-commits"></ol>
+  </details>
 </header>
 <div id="toolbar">
   <div id="review-tabs" role="tablist" aria-label="Review view">
@@ -814,6 +827,7 @@ function render() {
     item.textContent = repository.root + scope + range + " \u00b7 +" + repository.added + " / \u2212" + repository.removed;
     repos.appendChild(item);
   }
+  renderPullRequest(data.repositories.map((r) => r.range && r.range.pull_request).find(Boolean));
   state.files = [];
   for (const repository of data.repositories) {
     for (const file of repository.files) {
@@ -838,6 +852,47 @@ function reviewSummary(criterion) {
   const firstLine = criterion.split(NEWLINE).find((line) => line.trim()) || "";
   const compact = firstLine.trim().replace(/\s+/g, " ");
   return compact.length > 180 ? compact.slice(0, 177).trimEnd() + "…" : compact;
+}
+
+// A pull request's title, description and commits are context only: the diff
+// below is always the whole range, and none of this is part of the approval.
+function renderPullRequest(pr) {
+  el("pull-request").hidden = !pr;
+  if (!pr) return;
+  el("pr-summary").textContent = "Pull request #" + pr.number + ": " + pr.title
+    + " (" + pr.base_ref + " \u2190 " + pr.head_ref + ", " + pr.commits.length
+    + " commit" + (pr.commits.length === 1 ? "" : "s") + ")";
+  const body = el("pr-body");
+  body.textContent = "";
+  const link = document.createElement("a");
+  link.href = pr.url;
+  link.textContent = pr.url;
+  const source = document.createElement("p");
+  source.appendChild(link);
+  if (md && pr.body.trim()) {
+    body.innerHTML = md.render(pr.body);
+  } else {
+    const text = document.createElement("p");
+    text.textContent = pr.body.trim() || "No description.";
+    body.appendChild(text);
+  }
+  body.appendChild(source);
+  for (const anchor of body.querySelectorAll("a[href]")) {
+    anchor.target = "_blank";
+    anchor.rel = "noopener noreferrer";
+  }
+  const commits = el("pr-commits");
+  commits.textContent = "";
+  for (const commit of pr.commits) {
+    const item = document.createElement("li");
+    const oid = document.createElement("code");
+    oid.textContent = commit.oid.slice(0, 12);
+    const author = document.createElement("span");
+    author.className = "author";
+    author.textContent = commit.author;
+    item.append(oid, commit.headline, author);
+    commits.appendChild(item);
+  }
 }
 
 function renderBrief(criterion) {

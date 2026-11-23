@@ -9,6 +9,9 @@
 //! - `tern`: records each `tern browser` op as a JSON line to `FAKE_RECORD` and
 //!   answers like Tern; `FAKE_MODE` is `ok`, `error` or `phantom` (opens a
 //!   block that `blocks` does not list).
+//! - `gh`: answers `gh pr view N --json ...` with the file at `FAKE_GH_JSON`,
+//!   read on every call so a test can change it; exits 1 when the file is
+//!   missing, as a logged-out or offline `gh` would fail.
 
 #![allow(dead_code)]
 
@@ -42,6 +45,7 @@ pub fn run(role: &str, argv: &[String]) -> i32 {
         "reviewer" => reviewer(argv),
         "rex" => rex(&argv[1..]),
         "tern" => tern(&argv[1..]),
+        "gh" => gh(&argv[1..]),
         other => {
             eprintln!("unknown fake role {other}");
             2
@@ -58,8 +62,7 @@ fn var(name: &str) -> Option<String> {
 /// directory there (so a rename onto it fails); `STUB_SLEEP` waits;
 /// `STUB_RESULT` is printed with `__REVIEW_ID__` replaced unless
 /// `STUB_SUBSTITUTE=0`; `STUB_MODE` is `result`, `mutate` (append a line to
-/// `STUB_MUTATE` first), `git` (run git with the tab-separated arguments in
-/// `STUB_GIT` first), `garbage` (print non-JSON) or `fail` (exit 1).
+/// `STUB_MUTATE` first), `garbage` (print non-JSON) or `fail` (exit 1).
 fn reviewer(argv: &[String]) -> i32 {
     if !matches!(argv.get(1).map(String::as_str), Some("--review" | "--review-doc")) {
         eprintln!("the client must pass --review or --review-doc");
@@ -96,11 +99,6 @@ fn reviewer(argv: &[String]) -> i32 {
             let path = var("STUB_MUTATE").expect("STUB_MUTATE");
             let mut file = std::fs::OpenOptions::new().append(true).open(path).expect("open the mutated file");
             let _ = file.write_all(b"\nappended while the human was deciding\n");
-        }
-        "git" => {
-            let args = var("STUB_GIT").expect("STUB_GIT");
-            let status = std::process::Command::new("git").args(args.split('\t')).status().expect("run git");
-            assert!(status.success(), "git {args} failed");
         }
         "garbage" => {
             println!("rdg: this is not json");
@@ -171,4 +169,21 @@ pub fn rex_calls(record: &Path) -> Vec<Vec<String>> {
 pub fn tern_ops(record: &Path) -> Vec<Value> {
     let Ok(text) = std::fs::read_to_string(record) else { return Vec::new() };
     text.lines().filter_map(|line| serde_json::from_str(line).ok()).collect()
+}
+
+fn gh(args: &[String]) -> i32 {
+    if args.first().map(String::as_str) != Some("pr") || args.get(1).map(String::as_str) != Some("view") {
+        eprintln!("fake gh only answers pr view, not {args:?}");
+        return 2;
+    }
+    match var("FAKE_GH_JSON").and_then(|path| std::fs::read_to_string(path).ok()) {
+        Some(text) => {
+            print!("{text}");
+            0
+        }
+        None => {
+            eprintln!("gh: not logged in");
+            1
+        }
+    }
 }

@@ -156,15 +156,15 @@ chat fallback is permitted; a supported replacement requires explicit authorizat
 
 The client is the installed `senpai` binary, never a script in the repository under review. Call it by its absolute path (usually `~/.local/bin/senpai` or `~/.cargo/bin/senpai`, expanded; `command -v senpai` finds it); `senpai` below means that path.
 
-- `review --criterion TEXT --repo ROOT [--paths a,b] [--base REF [--head REF]] --recovery-dir PATH`
+- `review --criterion TEXT --repo ROOT [--paths a,b] [--base REF [--head REF] | --pr N] --recovery-dir PATH`
   opens the review, retains client-owned artifacts, and waits for a human decision.
 - `review-doc --criterion TEXT --doc PATH --recovery-dir PATH` does the same for
   the technical plan.
-- `preflight --criterion TEXT --repo ROOT [--paths a,b] [--base REF [--head REF]] [--guide PATH]`
+- `preflight --criterion TEXT --repo ROOT [--paths a,b] [--base REF [--head REF] | --pr N] [--guide PATH]`
   checks inputs without opening a review or changing an approval.
-- `verify --repo ROOT [--paths a,b] [--base REF [--head REF]]` checks the recorded
+- `verify --repo ROOT [--paths a,b] [--base REF [--head REF] | --pr N]` checks the recorded
   approval against the current tree.
-- `consume --repo ROOT [--base REF [--head REF]]` retires the approval after the commit.
+- `consume --repo ROOT [--base REF [--head REF] | --pr N]` retires the approval after the commit.
 
 By default a review covers uncommitted changes against `HEAD`. `--base REF`
 covers everything since the merge base with `REF`, committed and uncommitted,
@@ -173,6 +173,17 @@ alone; the working tree is ignored. Both need a single `--repo`. Pass the same
 range flags to every later command. An approval is bound to the resolved merge
 base, head commit and content, not to the ref names: a ref that moves so either
 commit changes no longer verifies.
+
+`--pr N` (or a pull request URL) reviews a GitHub pull request: `gh pr view`
+gives its base and head commits, which are reviewed as a commit range, and the
+page shows the title, description and commits as context. Both commits must
+already be local; if one is missing the command stops with the `git fetch` to
+run. Every later command asks `gh` again, so a push to the pull request stops
+`verify` passing, and a failing or missing `gh` fails the command closed.
+senpai never fetches, comments or approves on GitHub. GitHub reports the base branch's current
+tip, so a push to the base branch also needs a fetch before `verify` passes.
+If `gh` is offline, `revoke --repo ROOT` without `--pr` still retires the
+approval. Range and pull request reviews need the bundled HTML reviewer.
 
 The bundled HTML reviewer puts every review in one local inbox that `senpai`
 starts on demand; the client still blocks and returns the same result. An

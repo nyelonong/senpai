@@ -9,6 +9,7 @@ mod commands;
 mod diag;
 mod error;
 mod git;
+mod github;
 mod html;
 mod inbox;
 mod json;
@@ -105,11 +106,18 @@ fn repositories_from_options(args: &Args) -> Result<Vec<Repository>> {
         }
     };
     let (base, head) = (revision("--base")?, revision("--head")?);
-    if roots.len() > 1 && base.is_some() {
-        return Err(Error::Usage("--base and --head are only allowed with exactly one --repo".into()));
+    let pr = match args.value("--pr") {
+        None => None,
+        Some(raw) => request::normalize_pr(Some(&Value::Str(raw.clone()))).map_err(|e| Error::Usage(e.message()))?,
+    };
+    if roots.len() > 1 && (base.is_some() || pr.is_some()) {
+        return Err(Error::Usage("--base, --head and --pr are only allowed with exactly one --repo".into()));
     }
     if head.is_some() && base.is_none() {
         return Err(Error::Usage("--head needs --base".into()));
+    }
+    if pr.is_some() && base.is_some() {
+        return Err(Error::Usage("--pr cannot be combined with --base or --head".into()));
     }
     let paths = match raw_paths {
         Some(raw) if !raw.is_empty() => {
@@ -117,7 +125,7 @@ fn repositories_from_options(args: &Args) -> Result<Vec<Repository>> {
         }
         _ => None,
     };
-    request::scoped_repositories(&roots, &paths, &base, &head)
+    request::scoped_repositories(&roots, &paths, &request::Revisions { base, head, pr })
 }
 
 fn require_no_json_with_flags(args: &Args, names: &[&str]) -> Result<()> {
@@ -160,7 +168,7 @@ pub fn dispatch(args: &Args, git: &dyn Git, launcher: &mut dyn commands::Launche
         return dispatch_document(args, git, launcher);
     }
     if matches!(command, "review" | "preflight") {
-        require_no_json_with_flags(args, &["--criterion", "--repo", "--paths", "--base", "--head", "--guide"])?;
+        require_no_json_with_flags(args, &["--criterion", "--repo", "--paths", "--base", "--head", "--pr", "--guide"])?;
         let request: ReviewRequest = if let Some(json) = args.value("--json") {
             request::parse_request_json(json, true)?
         } else {
@@ -201,7 +209,7 @@ pub fn dispatch(args: &Args, git: &dyn Git, launcher: &mut dyn commands::Launche
         });
     }
     let repositories = if let Some(json) = args.value("--json") {
-        require_no_json_with_flags(args, &["--repo", "--paths", "--base", "--head"])?;
+        require_no_json_with_flags(args, &["--repo", "--paths", "--base", "--head", "--pr"])?;
         request::parse_request_json(json, false)?.repositories
     } else {
         repositories_from_options(args)?
