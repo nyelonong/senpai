@@ -731,5 +731,600 @@
    }
   ],
   "error": "guide exceeds the 48 KiB limit"
+ },
+ {
+  "function": "normalize_guide",
+  "args": [
+   {
+    "version": 1,
+    "fingerprint": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "summary": "S",
+    "before": "B",
+    "after": "A",
+    "chapters": [
+     {
+      "title": "Core",
+      "summary": "Why",
+      "files": [
+       {
+        "repository": "/repo",
+        "path": "src/a.go"
+       },
+       {
+        "repository": "/repo",
+        "path": "src/b.go"
+       }
+      ],
+      "steps": [
+       {
+        "title": "collect",
+        "note": "Runs reads together",
+        "repository": "/repo",
+        "path": "src/a.go",
+        "lines": [
+         10,
+         40
+        ]
+       }
+      ]
+     }
+    ]
+   }
+  ],
+  "output": {
+   "version": 1,
+   "fingerprint": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+   "summary": "S",
+   "before": "B",
+   "after": "A",
+   "chapters": [
+    {
+     "title": "Core",
+     "summary": "Why",
+     "files": [
+      {
+       "repository": "/repo",
+       "path": "src/a.go"
+      },
+      {
+       "repository": "/repo",
+       "path": "src/b.go"
+      }
+     ],
+     "steps": [
+      {
+       "title": "collect",
+       "note": "Runs reads together",
+       "repository": "/repo",
+       "path": "src/a.go",
+       "lines": [
+        10,
+        40
+       ]
+      }
+     ]
+    }
+   ]
+  }
+ },
+ {
+  "function": "normalize_guide",
+  "args": [
+   {
+    "version": 1,
+    "fingerprint": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "summary": "S",
+    "before": "B",
+    "after": "A",
+    "chapters": [
+     {
+      "title": "Core",
+      "summary": "Why",
+      "files": [
+       {
+        "repository": "/repo",
+        "path": "src/a.go"
+       },
+       {
+        "repository": "/repo",
+        "path": "src/b.go"
+       }
+      ],
+      "steps": [
+       {
+        "title": "collect",
+        "note": "Runs reads together",
+        "repository": "/repo",
+        "path": "src/c.go",
+        "lines": [
+         10,
+         40
+        ]
+       }
+      ]
+     }
+    ]
+   }
+  ],
+  "error": "guide step file is not one of its chapter's files: src/c.go"
+ },
+ {
+  "function": "normalize_guide",
+  "args": [
+   {
+    "version": 1,
+    "fingerprint": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "summary": "S",
+    "before": "B",
+    "after": "A",
+    "chapters": [
+     {
+      "title": "Core",
+      "summary": "Why",
+      "files": [
+       {
+        "repository": "/repo",
+        "path": "src/a.go"
+       },
+       {
+        "repository": "/repo",
+        "path": "src/b.go"
+       }
+      ],
+      "steps": [
+       {
+        "title": "collect",
+        "note": "Runs reads together",
+        "repository": "/repo",
+        "path": "src/a.go",
+        "lines": [
+         0,
+         3
+        ]
+       }
+      ]
+     }
+    ]
+   }
+  ],
+  "error": "guide step lines must be [start, end] with 1 ≤ start ≤ end ≤ 10000000"
+ },
+ {
+  "function": "normalize_guide",
+  "args": [
+   {
+    "version": 1,
+    "fingerprint": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "summary": "S",
+    "before": "B",
+    "after": "A",
+    "chapters": [
+     {
+      "title": "Core",
+      "summary": "Why",
+      "files": [
+       {
+        "repository": "/repo",
+        "path": "src/a.go"
+       },
+       {
+        "repository": "/repo",
+        "path": "src/b.go"
+       }
+      ],
+      "steps": [
+       {
+        "title": "collect",
+        "note": "Runs reads together",
+        "repository": "/repo",
+        "path": "src/a.go",
+        "lines": [
+         5,
+         4
+        ]
+       }
+      ]
+     }
+    ]
+   }
+  ],
+  "error": "guide step lines must be [start, end] with 1 ≤ start ≤ end ≤ 10000000"
+ },
+ {
+  "function": "normalize_guide",
+  "args": [
+   {
+    "version": 1,
+    "fingerprint": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "summary": "S",
+    "before": "B",
+    "after": "A",
+    "chapters": [
+     {
+      "title": "Core",
+      "summary": "Why",
+      "files": [
+       {
+        "repository": "/repo",
+        "path": "src/a.go"
+       },
+       {
+        "repository": "/repo",
+        "path": "src/b.go"
+       }
+      ],
+      "steps": [
+       {
+        "title": "collect",
+        "note": "Runs reads together",
+        "repository": "/repo",
+        "path": "src/a.go",
+        "lines": [
+         1
+        ]
+       }
+      ]
+     }
+    ]
+   }
+  ],
+  "error": "guide step lines must be [start, end] with 1 ≤ start ≤ end ≤ 10000000"
+ },
+ {
+  "function": "normalize_guide",
+  "args": [
+   {
+    "version": 1,
+    "fingerprint": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "summary": "S",
+    "before": "B",
+    "after": "A",
+    "chapters": [
+     {
+      "title": "Core",
+      "summary": "Why",
+      "files": [
+       {
+        "repository": "/repo",
+        "path": "src/a.go"
+       },
+       {
+        "repository": "/repo",
+        "path": "src/b.go"
+       }
+      ],
+      "steps": [
+       {
+        "title": "collect",
+        "note": "Runs reads together",
+        "repository": "/repo",
+        "path": "src/a.go",
+        "lines": [
+         1.0,
+         2
+        ]
+       }
+      ]
+     }
+    ]
+   }
+  ],
+  "error": "guide step lines must be [start, end] with 1 ≤ start ≤ end ≤ 10000000"
+ },
+ {
+  "function": "normalize_guide",
+  "args": [
+   {
+    "version": 1,
+    "fingerprint": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "summary": "S",
+    "before": "B",
+    "after": "A",
+    "chapters": [
+     {
+      "title": "Core",
+      "summary": "Why",
+      "files": [
+       {
+        "repository": "/repo",
+        "path": "src/a.go"
+       },
+       {
+        "repository": "/repo",
+        "path": "src/b.go"
+       }
+      ],
+      "steps": [
+       {
+        "title": "collect",
+        "note": "Runs reads together",
+        "repository": "/repo",
+        "path": "src/a.go",
+        "lines": [
+         true,
+         2
+        ]
+       }
+      ]
+     }
+    ]
+   }
+  ],
+  "error": "guide step lines must be [start, end] with 1 ≤ start ≤ end ≤ 10000000"
+ },
+ {
+  "function": "normalize_guide",
+  "args": [
+   {
+    "version": 1,
+    "fingerprint": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "summary": "S",
+    "before": "B",
+    "after": "A",
+    "chapters": [
+     {
+      "title": "Core",
+      "summary": "Why",
+      "files": [
+       {
+        "repository": "/repo",
+        "path": "src/a.go"
+       },
+       {
+        "repository": "/repo",
+        "path": "src/b.go"
+       }
+      ],
+      "steps": [
+       {
+        "title": "collect",
+        "note": "Runs reads together",
+        "repository": "/repo",
+        "path": "src/a.go",
+        "lines": "1-2"
+       }
+      ]
+     }
+    ]
+   }
+  ],
+  "error": "guide step lines must be [start, end] with 1 ≤ start ≤ end ≤ 10000000"
+ },
+ {
+  "function": "normalize_guide",
+  "args": [
+   {
+    "version": 1,
+    "fingerprint": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "summary": "S",
+    "before": "B",
+    "after": "A",
+    "chapters": [
+     {
+      "title": "Core",
+      "summary": "Why",
+      "files": [
+       {
+        "repository": "/repo",
+        "path": "src/a.go"
+       },
+       {
+        "repository": "/repo",
+        "path": "src/b.go"
+       }
+      ],
+      "steps": [
+       {
+        "title": "collect",
+        "note": "Runs reads together",
+        "repository": "/repo",
+        "path": "src/a.go",
+        "lines": [
+         10,
+         40
+        ],
+        "extra": 1
+       }
+      ]
+     }
+    ]
+   }
+  ],
+  "error": "each guide step needs title, note, repository, path and lines"
+ },
+ {
+  "function": "normalize_guide",
+  "args": [
+   {
+    "version": 1,
+    "fingerprint": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "summary": "S",
+    "before": "B",
+    "after": "A",
+    "chapters": [
+     {
+      "title": "Core",
+      "summary": "Why",
+      "files": [
+       {
+        "repository": "/repo",
+        "path": "src/a.go"
+       },
+       {
+        "repository": "/repo",
+        "path": "src/b.go"
+       }
+      ],
+      "steps": []
+     }
+    ]
+   }
+  ],
+  "error": "guide chapter steps must be a list of 1–64 steps"
+ },
+ {
+  "function": "normalize_guide",
+  "args": [
+   {
+    "version": 1,
+    "fingerprint": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "summary": "S",
+    "before": "B",
+    "after": "A",
+    "chapters": [
+     {
+      "title": "Core",
+      "summary": "Why",
+      "files": [
+       {
+        "repository": "/repo",
+        "path": "src/a.go"
+       },
+       {
+        "repository": "/repo",
+        "path": "src/b.go"
+       }
+      ],
+      "steps": [
+       {
+        "title": "collect",
+        "note": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+        "repository": "/repo",
+        "path": "src/a.go",
+        "lines": [
+         10,
+         40
+        ]
+       }
+      ]
+     }
+    ]
+   }
+  ],
+  "error": "guide step note must be non-empty text of at most 300 characters"
+ },
+ {
+  "function": "normalize_guide",
+  "args": [
+   {
+    "version": 1,
+    "fingerprint": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "summary": "S",
+    "before": "B",
+    "after": "A",
+    "chapters": [
+     {
+      "title": "Core",
+      "summary": "Why",
+      "files": [
+       {
+        "repository": "/repo",
+        "path": "src/a.go"
+       },
+       {
+        "repository": "/repo",
+        "path": "src/b.go"
+       }
+      ],
+      "steps": [
+       {
+        "title": "collect",
+        "note": "Runs reads together",
+        "repository": "/repo",
+        "path": "src/a.go",
+        "lines": [
+         10,
+         40
+        ]
+       }
+      ],
+      "extra": []
+     }
+    ]
+   }
+  ],
+  "error": "each guide chapter needs title, summary and files; only steps is optional"
+ },
+ {
+  "function": "build_guide",
+  "args": [
+   {
+    "version": 1,
+    "fingerprint": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "summary": "S",
+    "before": "B",
+    "after": "A",
+    "chapters": [
+     {
+      "title": "Core",
+      "summary": "Why",
+      "files": [
+       {
+        "repository": "/repo",
+        "path": "src/a.go"
+       },
+       {
+        "repository": "/repo",
+        "path": "src/b.go"
+       }
+      ],
+      "steps": [
+       {
+        "title": "collect",
+        "note": "Runs reads together",
+        "repository": "/repo",
+        "path": "src/a.go",
+        "lines": [
+         10,
+         40
+        ]
+       }
+      ]
+     }
+    ]
+   },
+   [
+    {
+     "root": "/repo",
+     "files": [
+      {
+       "repository": "/repo",
+       "path": "src/a.go"
+      },
+      {
+       "repository": "/repo",
+       "path": "src/b.go"
+      }
+     ]
+    }
+   ]
+  ],
+  "output": {
+   "authored": true,
+   "summary": "S",
+   "before": "B",
+   "after": "A",
+   "chapters": [
+    {
+     "title": "Core",
+     "summary": "Why",
+     "file_indices": [
+      0,
+      1
+     ],
+     "steps": [
+      {
+       "title": "collect",
+       "note": "Runs reads together",
+       "file_index": 0,
+       "lines": [
+        10,
+        40
+       ]
+      }
+     ]
+    }
+   ]
+  }
  }
 ]

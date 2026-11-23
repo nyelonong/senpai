@@ -401,12 +401,34 @@ fn build_guide(guide: Option<&Value>, repositories: &[Object]) -> Result<Value> 
                     covered[index] = true;
                     members.push(Value::from(index));
                 }
-                chapters.push(Value::Object(
-                    Object::new()
-                        .with("title", chapter.get("title").cloned().unwrap_or(Value::Null))
-                        .with("summary", chapter.get("summary").cloned().unwrap_or(Value::Null))
-                        .with("file_indices", Value::Array(members)),
-                ));
+                let mut out = Object::new()
+                    .with("title", chapter.get("title").cloned().unwrap_or(Value::Null))
+                    .with("summary", chapter.get("summary").cloned().unwrap_or(Value::Null))
+                    .with("file_indices", Value::Array(members));
+                if let Some(steps) = chapter.get("steps").and_then(Value::as_array) {
+                    let mut out_steps = Vec::new();
+                    for step in steps {
+                        let wanted = (
+                            step.get("repository").and_then(Value::as_pystr).cloned().unwrap_or_default(),
+                            step.get("path").and_then(Value::as_pystr).cloned().unwrap_or_default(),
+                        );
+                        let Some(index) = files.iter().position(|f| identity(f) == wanted) else {
+                            return Err(Error::Result(format!(
+                                "guide step references a file outside the captured diff: {}",
+                                wanted.1.display()
+                            )));
+                        };
+                        out_steps.push(Value::Object(
+                            Object::new()
+                                .with("title", step.get("title").cloned().unwrap_or(Value::Null))
+                                .with("note", step.get("note").cloned().unwrap_or(Value::Null))
+                                .with("file_index", Value::from(index))
+                                .with("lines", step.get("lines").cloned().unwrap_or(Value::Null)),
+                        ));
+                    }
+                    out.insert("steps", Value::Array(out_steps));
+                }
+                chapters.push(Value::Object(out));
             }
             let remaining: Vec<Value> = (0..files.len()).filter(|i| !covered[*i]).map(Value::from).collect();
             if !remaining.is_empty() {

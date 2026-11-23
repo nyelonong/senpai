@@ -209,6 +209,13 @@ body.document #current-file{display:none}
 .arrow .tip{position:absolute; left:20px; bottom:0; width:0; height:0; border:5px solid transparent; border-top:7px solid var(--muted); border-bottom:0}
 .node .count{font-family:var(--mono); font-size:11.5px; font-weight:600; white-space:nowrap; opacity:.85}
 .node.filtered{opacity:.55}
+#guide-flow .node .sub{display:-webkit-box; -webkit-box-orient:vertical; -webkit-line-clamp:2; line-clamp:2; overflow:hidden}
+.guide-group{display:flex; flex-direction:column; gap:8px; padding:8px; border:1.5px dashed var(--line); border-radius:10px}
+.guide-steps{display:flex; flex-wrap:wrap; gap:6px}
+.guide-steps .node{flex:1 1 118px; padding:6px 9px}
+.guide-steps .node b{font-size:13px}
+.guide-steps .node .sub{font-size:12px}
+.guide-steps .node.rest{border-style:dashed}
 
 /* ----------------------------------------------------------- diff (right) */
 .file{margin:0; border-bottom:1px solid var(--line); background:var(--code-bg)}
@@ -305,6 +312,12 @@ body.document .thread-card{margin:4px 0 14px}
 .guide-files{display:flex; flex-wrap:wrap; gap:6px}
 .guide-files button{text-align:left; overflow-wrap:anywhere; white-space:normal; font:600 12px/1.5 var(--mono); border-color:var(--line); color:var(--fg)}
 .guide-code{min-width:0}
+.guide-step{scroll-margin-top:0}
+.guide-step-head{padding:10px 20px 9px; background:var(--surface); border-bottom:1px solid var(--line-soft); border-left:3px solid var(--accent)}
+.guide-step-head h3{margin:0; font-size:15px; font-weight:800; overflow-wrap:anywhere}
+.guide-step-head p{margin:2px 0 0; color:var(--muted); font-size:13.5px; line-height:1.5; white-space:pre-wrap; overflow-wrap:anywhere; max-width:75ch}
+.guide-step-head .guide-where{font:600 12px/1.5 var(--mono)}
+.guide-step .guide-code > .empty{padding:10px 20px; margin:0}
 .guide-code > .file:last-child{border-bottom:0}
 
 /* ----------------------------------------------- comment list (sidebar) */
@@ -994,18 +1007,42 @@ function fileStat(file) {
   return stat;
 }
 
-// The guide drawn as a flow: one box per chapter, in the agent's order. A box
-// scrolls the shared diff to its chapter; the diff itself never splits.
+// The guide's reading order, shared by the flow, the diff and change
+// navigation. A chapter with steps shows each step's hunks under it; hunks no
+// step claims, and its files no step names, follow as "Other lines".
+function guideLayout() {
+  const shown = new Set(visibleFiles());
+  return state.data.guide.chapters.map((chapter, index) => {
+    const files = chapter.file_indices.filter(file => shown.has(state.files[file]));
+    const steps = (chapter.steps || []).filter(step => files.includes(step.file_index)).map((step, position) => ({
+      key: index + ":" + position, title: step.title, note: step.note, lines: step.lines, fileIndex: step.file_index, pieces: [],
+    }));
+    const rest = [];
+    for (const fileIndex of files) {
+      const own = steps.filter(step => step.fileIndex === fileIndex);
+      const lines = state.files[fileIndex].lines;
+      if (!own.length || !lines.length) { rest.push({fileIndex, rows: null}); continue; }
+      const {parts, rest: left} = ReviewDiff.guideParts(lines, own.map(step => step.lines));
+      own.forEach((step, position) => { if (parts[position].length) step.pieces.push({fileIndex, rows: parts[position]}); });
+      if (left.length) rest.push({fileIndex, rows: left});
+    }
+    return {index, chapter, files, steps, rest};
+  });
+}
+
+// The guide drawn as a flow: one small box per chapter, and per step inside a
+// chapter that has them. A box scrolls the shared diff to its section; the
+// full text stays in the diff pane and the box's tooltip.
 function renderGuideFlow() {
   const host = el("guide-flow");
   host.textContent = "";
   const guide = state.data.guide;
-  const shown = new Set(visibleFiles());
-  const node = (className, title, detail, chapter) => {
+  const node = (className, title, detail, target) => {
     const box = document.createElement("button");
     box.type = "button";
     box.className = className;
-    box.dataset.chapter = String(chapter);
+    box.dataset.target = target;
+    box.title = detail;
     box.setAttribute("aria-pressed", "false");
     const heading = document.createElement("b");
     heading.textContent = title;
@@ -1013,41 +1050,46 @@ function renderGuideFlow() {
     sub.className = "sub";
     sub.textContent = detail;
     box.append(heading, sub);
-    box.addEventListener("click", () => showChapter(chapter));
+    box.addEventListener("click", () => showGuideTarget(target));
     return box;
   };
-  host.appendChild(node("node main", guide.authored ? "The change" : "Every file", guide.summary, -1));
-  guide.chapters.forEach((chapter, index) => {
+  host.appendChild(node("node main", guide.authored ? "The change" : "Every file", guide.summary, "overview"));
+  for (const unit of guideLayout()) {
     const arrow = document.createElement("div");
     arrow.className = "arrow";
     arrow.setAttribute("aria-hidden", "true");
     const tip = document.createElement("i");
     tip.className = "tip";
     arrow.appendChild(tip);
-    const files = chapter.file_indices.filter((file) => shown.has(state.files[file])).length;
-    const box = node("node", (index + 1) + ". " + chapter.title, chapter.summary, index);
+    const box = node("node", (unit.index + 1) + ". " + unit.chapter.title, unit.chapter.summary, String(unit.index));
     const count = document.createElement("span");
     count.className = "count";
-    count.textContent = files + " file" + (files === 1 ? "" : "s");
+    count.textContent = unit.files.length + " file" + (unit.files.length === 1 ? "" : "s");
     box.firstChild.appendChild(count);
-    if (!files) { box.classList.add("filtered"); box.disabled = true; }
-    host.append(arrow, box);
-  });
+    if (!unit.files.length) { box.classList.add("filtered"); box.disabled = true; }
+    if (!unit.steps.length) { host.append(arrow, box); continue; }
+    const group = document.createElement("div");
+    group.className = "guide-group";
+    const steps = document.createElement("div");
+    steps.className = "guide-steps";
+    for (const step of unit.steps) steps.appendChild(node("node step", step.title, step.note, step.key));
+    if (unit.rest.length) steps.appendChild(node("node step rest", "Other lines", "Changes in this chapter that no step covers", unit.index + ":rest"));
+    group.append(box, steps);
+    host.append(arrow, group);
+  }
   trackChapter();
 }
 
-function showChapter(chapter) {
-  const host = el("diff");
-  const target = chapter < 0 ? host.querySelector(".guide-overview")
-    : host.querySelector('.guide-chapter[data-chapter="' + chapter + '"]');
-  if (!target) return;
-  target.scrollIntoView({block: "start"});
-  markChapter(chapter);
+function showGuideTarget(target) {
+  const section = el("diff").querySelector('[data-target="' + target + '"]');
+  if (!section) return;
+  section.scrollIntoView({block: "start"});
+  markChapter(target);
 }
 
-function markChapter(chapter) {
+function markChapter(target) {
   for (const box of el("guide-flow").querySelectorAll(".node")) {
-    box.setAttribute("aria-pressed", box.dataset.chapter === String(chapter) ? "true" : "false");
+    box.setAttribute("aria-pressed", box.dataset.target === target ? "true" : "false");
   }
 }
 
@@ -1055,9 +1097,9 @@ function trackChapter() {
   if (boot.mode === "document" || state.reviewView !== "guided") return;
   const host = el("diff");
   const top = Math.max(host.getBoundingClientRect().top, 0) + 48;
-  let current = -1;
-  for (const section of host.querySelectorAll(".guide-chapter")) {
-    if (section.getBoundingClientRect().top <= top) current = Number(section.dataset.chapter);
+  let current = "overview";
+  for (const section of host.querySelectorAll("[data-target]")) {
+    if (section.getBoundingClientRect().top <= top) current = section.dataset.target;
   }
   markChapter(current);
 }
@@ -1070,7 +1112,7 @@ function trackFile() {
   // be above the viewport.
   const top = Math.max(host.getBoundingClientRect().top, 0);
   const location = state.changeLocation;
-  const destination = location && Math.abs(host.scrollTop - location.scrollTop) < 1 && blocks.find((block) => Number(block.dataset.file) === location.fileIndex);
+  const destination = location && Math.abs(host.scrollTop - location.scrollTop) < 1 && changeElement(location)?.closest(".file");
   const current = destination || blocks.find((block) => block.getBoundingClientRect().bottom > top + 1) || blocks[blocks.length - 1];
   state.currentFile = current ? Number(current.dataset.file) : -1;
   el("current-file").hidden = !current;
@@ -1092,14 +1134,15 @@ function trackFile() {
 }
 
 function collectChangeStops() {
+  const pieces = state.reviewView === "guided" && state.data?.guide
+    ? guideLayout().flatMap(unit => [...unit.steps.flatMap(step => step.pieces), ...unit.rest])
+    : visibleFiles().map(file => ({fileIndex: state.files.indexOf(file), rows: null}));
   const stops = [];
-  for (const file of visibleFiles()) {
-    const fileIndex = state.files.indexOf(file);
-    const rows = [];
-    file.lines.forEach((line, row) => {
-      if (line.type === "meta" && line.text.startsWith("@@ ")) rows.push(row);
-    });
-    for (const row of rows.length ? rows : [null]) stops.push({fileIndex, row});
+  for (const {fileIndex, rows} of pieces) {
+    const lines = state.files[fileIndex].lines;
+    const heads = (rows || lines.map((_, row) => row)).filter((row, k, all) =>
+      (lines[row].type === "meta" && lines[row].text.startsWith("@@ ")) || (k > 0 && all[k - 1] !== row - 1) || (k === 0 && rows && row > 0));
+    for (const row of heads.length ? heads : [null]) stops.push({fileIndex, row});
   }
   return stops;
 }
@@ -1401,8 +1444,11 @@ function onDiffKey(event) {
   if (!anchor) return;
   const fileIndex = Number(anchor.dataset.file);
   const file = state.files[fileIndex];
-  const limit = boot.maxLines > 0 ? Math.min(file.lines.length, boot.maxLines) : file.lines.length;
-  const lines = file.lines.slice(0, limit);
+  // Keys move within the drawn block only: a guide step draws part of a file,
+  // so rows outside it count as gaps, never as the next line.
+  const drawn = new Set(Array.from(anchor.closest(".file").querySelectorAll(".row[data-row]"), row => Number(row.dataset.row)));
+  const gap = {type: "meta", old_line: null, new_line: null, text: ""};
+  const lines = file.lines.map((line, index) => drawn.has(index) ? line : gap);
   if (!selected) {
     const index = Number(anchor.dataset.row);
     const side = event.key === "ArrowLeft" && file.lines[index].old_line !== null ? "old" :
@@ -1460,6 +1506,7 @@ function renderGuideOverview(host) {
   const guide = state.data.guide;
   const overview = document.createElement("section");
   overview.className = "guide-overview";
+  overview.dataset.target = "overview";
   const title = document.createElement("h2");
   title.textContent = "Overview";
   const note = document.createElement("p");
@@ -1500,22 +1547,25 @@ function renderGuideOverview(host) {
 function renderGuidedDiff(host) {
   renderGuideOverview(host);
   const guide = state.data.guide;
-  const shown = new Set(visibleFiles());
-  guide.chapters.forEach((chapter, chapterIndex) => {
-    const files = chapter.file_indices.map(index => state.files[index]).filter(file => shown.has(file));
-    if (!files.length) return;
+  const code = (container, pieces) => {
+    for (const {fileIndex, rows} of pieces) container.appendChild(renderFileDiff(state.files[fileIndex], rows));
+  };
+  for (const unit of guideLayout()) {
+    if (!unit.files.length) continue;
+    const chapterIndex = unit.index;
     const section = document.createElement("section");
     section.className = "guide-chapter";
     section.dataset.chapter = String(chapterIndex);
     const context = document.createElement("div");
     context.className = "guide-context";
+    context.dataset.target = String(chapterIndex);
     const position = document.createElement("p");
     position.className = "guide-position";
     position.textContent = "Chapter " + (chapterIndex + 1) + " of " + guide.chapters.length;
     const title = document.createElement("h2");
-    title.textContent = chapter.title;
+    title.textContent = unit.chapter.title;
     const summary = document.createElement("p");
-    summary.textContent = chapter.summary;
+    summary.textContent = unit.chapter.summary;
     const progress = document.createElement("label");
     progress.className = "guide-progress";
     const checkbox = document.createElement("input");
@@ -1530,10 +1580,8 @@ function renderGuidedDiff(host) {
     progress.append(checkbox, label);
     const list = document.createElement("div");
     list.className = "guide-files";
-    const code = document.createElement("div");
-    code.className = "guide-code";
-    for (const file of files) {
-      const index = state.files.indexOf(file);
+    for (const index of unit.files) {
+      const file = state.files[index];
       const link = document.createElement("button");
       link.className = "tiny ghost";
       link.textContent = file.path + "  +" + file.added + " / -" + file.removed;
@@ -1544,12 +1592,50 @@ function renderGuidedDiff(host) {
         el("diff").focus({preventScroll: true});
       });
       list.appendChild(link);
-      code.appendChild(renderFileDiff(file));
     }
     context.append(position, title, summary, progress, list);
-    section.append(context, code);
+    section.appendChild(context);
+    const parts = unit.steps.map(step => ({...step, where: state.files[step.fileIndex].path + " · lines " + step.lines[0] + "–" + step.lines[1]}));
+    if (unit.steps.length && unit.rest.length) {
+      parts.push({key: chapterIndex + ":rest", title: "Other lines", note: "Changes in this chapter that no step covers.", pieces: unit.rest});
+    }
+    if (!unit.steps.length) {
+      const body = document.createElement("div");
+      body.className = "guide-code";
+      code(body, unit.rest);
+      section.appendChild(body);
+    }
+    for (const part of parts) {
+      const step = document.createElement("div");
+      step.className = "guide-step";
+      step.dataset.target = part.key;
+      const head = document.createElement("div");
+      head.className = "guide-step-head";
+      const name = document.createElement("h3");
+      name.textContent = part.title;
+      const note = document.createElement("p");
+      note.textContent = part.note;
+      head.append(name, note);
+      if (part.where) {
+        const where = document.createElement("p");
+        where.className = "guide-where";
+        where.textContent = part.where;
+        head.appendChild(where);
+      }
+      const body = document.createElement("div");
+      body.className = "guide-code";
+      if (part.pieces.length) code(body, part.pieces);
+      else {
+        const empty = document.createElement("p");
+        empty.className = "empty";
+        empty.textContent = "No changed lines fall in this range.";
+        body.appendChild(empty);
+      }
+      step.append(head, body);
+      section.appendChild(step);
+    }
     host.appendChild(section);
-  });
+  }
 }
 
 function renderDiff() {
@@ -1584,7 +1670,9 @@ function renderDiff() {
   trackFile();
 }
 
-function renderFileDiff(file) {
+// only, when given, limits the file to those row indexes (one guide step's
+// hunks); row indexes stay the file's own, so comments and selection agree.
+function renderFileDiff(file, only) {
     const fileIndex = state.files.indexOf(file);
     const open = state.expanded.has(fileIndex);
     const block = document.createElement("article");
@@ -1618,10 +1706,14 @@ function renderFileDiff(file) {
     block.appendChild(heading);
 
     if (open) {
+      const all = only || file.lines.map((_, row) => row);
+      const limit = boot.maxLines > 0 ? Math.min(all.length, boot.maxLines) : all.length;
+      const shown = all.slice(0, limit);
+      const at = (k) => k === null || k === undefined ? k : shown[k];
+      const pairs = ReviewDiff.pairLines(shown.map(row => file.lines[row]))
+        .map(pair => pair.meta !== undefined ? {meta: shown[pair.meta]} : {old: at(pair.old), new: at(pair.new)});
       const rows = document.createElement("div");
       rows.className = "rows";
-      const limit = boot.maxLines > 0 ? Math.min(file.lines.length, boot.maxLines) : file.lines.length;
-      const pairs = ReviewDiff.pairLines(file.lines.slice(0, limit));
       const changes = new Map();
       for (const pair of pairs) {
         if (pair.old == null || pair.new == null || file.lines[pair.old].type !== "remove" || file.lines[pair.new].type !== "add") continue;
@@ -1647,7 +1739,7 @@ function renderFileDiff(file) {
           }
         }
       } else {
-        for (let row = 0; row < limit; row++) rows.appendChild(makeRow(fileIndex, file.lines[row], row, changes.get(row)));
+        for (const row of shown) rows.appendChild(makeRow(fileIndex, file.lines[row], row, changes.get(row)));
       }
       if (file.binary) {
         const note = document.createElement("div");
@@ -1658,13 +1750,13 @@ function renderFileDiff(file) {
         note.appendChild(code);
         rows.appendChild(note);
       }
-      if (file.lines.length > limit) {
+      if (all.length > limit) {
         const more = document.createElement("div");
         more.className = "row meta";
         more.style.gridTemplateColumns = "1fr";
         const button = document.createElement("button");
         button.className = "link";
-        button.textContent = "… " + (file.lines.length - limit) + " more line(s) not rendered";
+        button.textContent = "… " + (all.length - limit) + " more line(s) not rendered";
         button.addEventListener("click", () => { boot.maxLines = 0; renderDiff(); });
         more.appendChild(button);
         rows.appendChild(more);
@@ -2067,11 +2159,9 @@ function paintSelection() {
     }
     return;
   }
-  const block = document.querySelector('.file[data-file="' + selection.fileIndex + '"]');
-  if (!block) return;
   const from = Math.min(selection.from, selection.to);
   const to = Math.max(selection.from, selection.to);
-  for (const row of block.querySelectorAll(".row[data-row]")) {
+  for (const row of el("diff").querySelectorAll('.row[data-row][data-file="' + selection.fileIndex + '"]')) {
     const index = Number(row.dataset.row);
     if (index < from || index > to || (row.dataset.side && row.dataset.side !== selection.side)) continue;
     if (sideNumber(state.files[selection.fileIndex].lines[index], selection.side) === null) continue;

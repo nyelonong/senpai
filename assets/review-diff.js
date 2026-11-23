@@ -100,7 +100,67 @@
     return null;
   }
 
-  const api = {pairLines, rangeFor, wordRanges, moveSelection};
+  // Gives each row of a file to the first range holding it, so one hunk can
+  // feed several steps. A row's place is its after-side number; a removed
+  // row takes the after-side number where it was removed; a deleted file's
+  // hunk (+0,0) uses before-side numbers. A changed row
+  // outside every range goes to rest; a context row follows the nearest
+  // changed row (the later one on a tie); a hunk header follows the row after
+  // it, the file's preamble its first hunk header, and other metadata the row
+  // before. Every row lands in exactly one part
+  // or in rest, so nothing in the diff goes unshown.
+  function guideParts(lines, ranges) {
+    const hunks = [];
+    lines.forEach((line, index) => {
+      if (!hunks.length || (line.type === "meta" && line.text.startsWith("@@ "))) hunks.push([]);
+      hunks[hunks.length - 1].push(index);
+    });
+    const owner = new Array(lines.length).fill(-1);
+    const rangeOf = (place) => place === null ? -1 : ranges.findIndex(([start, end]) => start <= place && place <= end);
+    for (const rows of hunks) {
+      const header = /^@@ -\S+ \+(\d+)(?:,(\d+))?/.exec(lines[rows[0]].text);
+      const side = header && header[1] === "0" && header[2] === "0" ? "old_line" : "new_line";
+      const places = rows.map(() => null);
+      let next = null;
+      for (let k = rows.length - 1; k >= 0; k--) {
+        const line = lines[rows[k]];
+        const own = line[side] ?? null;
+        if (own !== null) next = own;
+        places[k] = own !== null ? own : line.type === "remove" ? next : null;
+      }
+      let previous = header ? Math.max(Number(header[1]), 1) : null;
+      places.forEach((place, k) => {
+        if (place === null && lines[rows[k]].type === "remove") places[k] = previous;
+        else if (place !== null) previous = place;
+      });
+      const changed = rows.map((row, k) => ["add", "remove"].includes(lines[row].type) ? k : -1).filter((k) => k >= 0);
+      rows.forEach((row, k) => {
+        const line = lines[row];
+        if (line.type === "add" || line.type === "remove") owner[row] = rangeOf(places[k]);
+      });
+      rows.forEach((row, k) => {
+        if (lines[row].type !== "context") return;
+        const inside = rangeOf(places[k]);
+        if (inside >= 0 || !changed.length) { owner[row] = inside; return; }
+        const nearest = changed.reduce((best, c) => Math.abs(c - k) <= Math.abs(best - k) ? c : best);
+        owner[row] = owner[rows[nearest]];
+      });
+      rows.forEach((row, k) => {
+        if (lines[row].type !== "meta") return;
+        const header = lines[row].text.startsWith("@@ ");
+        const neighbour = header ? rows.slice(k + 1).find((r) => lines[r].type !== "meta") : rows[k - 1];
+        owner[row] = neighbour === undefined ? -1 : owner[neighbour];
+      });
+    }
+    const first = lines.findIndex((line) => line.type === "meta" && line.text.startsWith("@@ "));
+    for (let row = 0; row < first; row++) owner[row] = owner[first];
+    const parts = ranges.map(() => []);
+    const rest = [];
+    owner.forEach((index, row) => (index < 0 ? rest : parts[index]).push(row));
+    return {parts, rest};
+  }
+
+  const api = {pairLines, rangeFor, wordRanges, moveSelection, guideParts};
   root.ReviewDiff = api;
   if (typeof module !== "undefined" && module.exports) module.exports = api;
 })(globalThis);

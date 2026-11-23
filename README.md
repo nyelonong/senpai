@@ -130,7 +130,8 @@ relaunching; recovery does not replace `verify`/`verify-doc` or `consume`.
 ### Guided tab (HTML)
 
 **Diff** remains the default. **Guided** shows an overview, before/after cards,
-optional flow labels, and explained chapters beside the same real diffs. Comments,
+optional flow labels, and explained chapters, each optionally split into
+per-function steps, beside the same real diffs. Comments,
 drafts, layout controls and approval checks are shared. Chapter checkboxes track
 reading only, for this page session; they are not approval.
 
@@ -177,13 +178,29 @@ Guide format (replace the fingerprint and repository root):
     {
       "title": "Core change",
       "summary": "Why these files belong together and what to inspect",
-      "files": [{"repository": "/absolute/repository/root", "path": "src/example.py"}]
+      "files": [{"repository": "/absolute/repository/root", "path": "src/example.py"}],
+      "steps": [
+        {
+          "title": "load_config",
+          "note": "Reads the file once and caches it",
+          "repository": "/absolute/repository/root",
+          "path": "src/example.py",
+          "lines": [12, 40]
+        }
+      ]
     }
   ]
 }
 ```
 
-- Only `flow` is optional. Guide version is integer `1`; total serialized size is
+- `steps` is optional and splits a chapter into small boxes, one per function or
+  region: a title (80 characters), a one-line note (300), one of the chapter's
+  files and `[start, end]` after-side line numbers (before-side for a deleted
+  file), at most 10,000,000. Each changed line shows under the first step whose
+  range holds it, so one hunk can be split between steps; context lines follow
+  the nearest changed line. Changed lines outside every step, and chapter files
+  no step names, show as **Other lines**. 1–64 steps.
+- Only `flow` and chapter `steps` are optional. Guide version is integer `1`; total serialized size is
   at most 48 KiB. Text fields allow 8,000 characters, titles/flow labels 200;
   at most 128 chapters and 1–20 flow labels per side. Each chapter has at least one file.
 - File references use canonical repository roots and current diff paths (rename

@@ -3,7 +3,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
-const {pairLines, rangeFor, wordRanges, moveSelection} = require('../assets/review-diff.js');
+const {pairLines, rangeFor, wordRanges, moveSelection, guideParts} = require('../assets/review-diff.js');
 
 const line = (type, old_line, new_line, text = type) => ({type, old_line, new_line, text});
 
@@ -125,6 +125,26 @@ test('keyboard side changes follow visual pairs and cannot select blank sides', 
   assert.equal(moveSelection(lines, {side: 'old', from: 0.5, to: 0.5}, 'ArrowDown'), null);
 });
 
+test('guide steps split hunks by line and leave no row unshown', () => {
+  const hunk = text => ({type: 'meta', old_line: null, new_line: null, text});
+  const lines = [hunk('@@ -1 +1 @@'), line('remove', 1, null), line('add', null, 1),
+    hunk('@@ -16,6 +28,18 @@'), line('context', 16, 28), line('add', null, 29), line('add', null, 30),
+    line('context', 17, 31), line('remove', 18, null), line('add', null, 32), line('context', 19, 33),
+    line('meta', null, null, '\\ No newline'),
+    hunk('@@ -90 +90 @@'), line('remove', 90, null), line('add', null, 90)];
+  assert.deepEqual(guideParts(lines, [[29, 30], [32, 40], [1, 1]]),
+    {parts: [[3, 4, 5, 6], [7, 8, 9, 10, 11], [0, 1, 2]], rest: [12, 13, 14]});
+  const deleted = [hunk('@@ -1,2 +0,0 @@'), line('remove', 1, null), line('remove', 2, null)];
+  assert.deepEqual(guideParts(deleted, [[2, 2]]), {parts: [[2]], rest: [0, 1]});
+  assert.deepEqual(guideParts([], [[1, 2]]), {parts: [[]], rest: []});
+  const zeroContext = [hunk('@@ -7,2 +6,0 @@'), line('remove', 7, null), line('remove', 8, null), line('meta', null, null, '\\ No newline')];
+  assert.deepEqual(guideParts(zeroContext, [[6, 6]]), {parts: [[0, 1, 2, 3]], rest: []});
+  const trailing = [hunk('@@ -3,2 +3 @@'), line('context', 3, 3), line('remove', 4, null)];
+  assert.deepEqual(guideParts(trailing, [[3, 3]]), {parts: [[0, 1, 2]], rest: []});
+  const preamble = [hunk('diff --git a/x b/x'), hunk('@@ -5 +5 @@'), line('remove', 5, null), line('add', null, 5)];
+  assert.deepEqual(guideParts(preamble, [[5, 5]]), {parts: [[0, 1, 2, 3]], rest: []});
+});
+
 const pageSource = fs.readFileSync(path.join(__dirname, '../assets/review-page.html'), 'utf8');
 function pageFunction(name) {
   const start = pageSource.indexOf('function ' + name + '(');
@@ -206,14 +226,14 @@ function page(lines) {
   ui.help.hidden = true;
   const state = {files: [{repository: '/repo', path: 'src/example.js', status: 'modified', added: 1, removed: 1, lines}],
     threads: [], expanded: new Set([0]), diffView: 'split', reviewView: 'diff', reviewedChapters: new Set(), wrapLines: true, selection: null, painted: [], dragging: false, filter: ''};
-  const context = {state, boot: {mode: 'diff', maxLines: 1500}, ReviewDiff: {pairLines, rangeFor, wordRanges, moveSelection},
+  const context = {state, boot: {mode: 'diff', maxLines: 1500}, ReviewDiff: {pairLines, rangeFor, wordRanges, moveSelection, guideParts},
     el: id => ui[id], document: {createElement: tag => new Element(tag), createTextNode: text => new TextNode(text), querySelector: selector => ui.diff.querySelector(selector)},
     lineTokens: () => null, fileIcon: () => new Element(), statusClass: () => '',
     getComputedStyle: node => ({scrollMarginTop: node.dataset.row === undefined ? '0px' : '44px'}),
     hideComposer() {}, setCommentsCollapsed() {}, renderFiles() {},
     visibleFiles: () => state.files.filter(file => file.path.includes(state.filter))};
   const functions = ['sideNumber', 'pathLabel', 'makeRow', 'makeSideCell', 'diffRow', 'setDiffView', 'renderDiff', 'renderFileDiff',
-    'setReviewView', 'onReviewTabKey', 'renderGuideOverview', 'renderGuidedDiff', 'visibleFiles',
+    'setReviewView', 'onReviewTabKey', 'renderGuideOverview', 'renderGuidedDiff', 'guideLayout', 'visibleFiles',
     'markThreadedRows', 'threadCard', 'lineNumberFor', 'paintSelection', 'onRowPress', 'extendDiffSelection', 'selectionTarget',
     'jumpToThread', 'trackFile', 'markCodeChanges', 'readingPosition', 'restoreReadingPosition', 'setWrapLines',
     'onDiffKey', 'onSelectionEnter', 'showComposer', 'say', 'collectChangeStops', 'changeElement', 'trackChanges', 'stepChange'];
@@ -613,6 +633,40 @@ test('guide text is literal, fallback is honest, and progress changes no comment
   context.renderDiff();
   assert.equal(ui.diff.querySelectorAll('.guide-comparison').length, 0);
   assert.ok(ui.diff.textContent.includes('Directory grouping'));
+});
+
+test('Guided steps show only their hunks, in step order, with leftovers kept and navigation following them', () => {
+  for (const layout of ['inline', 'split']) {
+    const {context, state, ui} = guidedPage(layout);
+    state.data.guide.chapters[1].steps = [{title: 'Tail', note: 'Second hunk', file_index: 0, lines: [40, 40]}];
+    state.data.guide.chapters[0].steps = [{title: 'Nowhere', note: 'Range with no hunk', file_index: 1, lines: [100, 120]}];
+    context.setReviewView('guided');
+    const steps = ui.diff.querySelectorAll('.guide-step');
+    assert.deepEqual(steps.map(step => step.dataset.target), ['0:0', '0:rest', '1:0', '1:rest']);
+    assert.ok(steps[0].textContent.includes('No changed lines fall in this range.'));
+    const rowsOf = step => step.querySelectorAll('.row[data-row]').map(row => row.dataset.row);
+    assert.deepEqual([...new Set(rowsOf(steps[2]))], ['3', '4', '5']);
+    assert.deepEqual([...new Set(rowsOf(steps[3]))], ['0', '1', '2']);
+    assert.deepEqual(Array.from(context.collectChangeStops(), stop => [stop.fileIndex, stop.row]), [[1, 0], [0, 3], [0, 0]]);
+    assert.equal(context.diffRow(0, 4, 'old').dataset.row, '4');
+  }
+});
+
+test('Guided selection paints and moves only within the drawn step block', () => {
+  const {context, state, ui} = guidedPage('inline');
+  state.data.guide.chapters[1].steps = [{title: 'Tail', note: 'Second hunk', file_index: 0, lines: [40, 40]}];
+  context.setReviewView('guided');
+  const other = context.diffRow(0, 2, 'new');
+  other.listeners.mousedown({target: other.children[3], button: 0});
+  assert.deepEqual(Array.from(state.painted, row => row.dataset.row), ['2']);
+  ui.diff.focused = true;
+  const key = name => context.onDiffKey({key: name, target: ui.diff, preventDefault() {}});
+  key('ArrowDown');
+  assert.deepEqual(state.selection && [state.selection.from, state.selection.to], [2, 2], 'row 3 is drawn in another step');
+  const tail = context.diffRow(0, 5, 'new');
+  tail.listeners.mousedown({target: tail.children[3], button: 0});
+  key('ArrowUp');
+  assert.deepEqual([state.selection.from, state.selection.to], [5, 5], 'the previous after-side row is drawn in another step');
 });
 
 test('review tabs support keyboard focus and cannot alter document or submitted reviews', () => {

@@ -522,7 +522,8 @@ fn guide_resolves_captured_scope_without_changing_actual_diff() {
         "fingerprint": case.fingerprint(&[]),
         "summary": "<script>literal text</script>", "before": "One printed line", "after": "Two printed lines",
         "chapters": [{"title": "Core output", "summary": "Print the second value",
-                      "files": [{"repository": root, "path": "a.py"}]}],
+                      "files": [{"repository": root, "path": "a.py"}],
+                      "steps": [{"title": "print", "note": "Second value", "repository": root, "path": "a.py", "lines": [1, 2]}]}],
     });
     let mut guided_session = case.session_with(Some(review_request(&root, json!({"guide": value}))), "--review", false, &[]);
     let guided = guided_session.payload();
@@ -531,6 +532,10 @@ fn guide_resolves_captured_scope_without_changing_actual_diff() {
     let indices: Vec<Value> =
         guided["guide"]["chapters"].as_array().expect("chapters").iter().map(|c| at(c, "file_indices").clone()).collect();
     assert_eq!(vec![json!([0]), json!([1])], indices);
+    assert_eq!(
+        json!([{"title": "print", "note": "Second value", "file_index": 0, "lines": [1, 2]}]),
+        guided["guide"]["chapters"][0]["steps"]
+    );
     assert_eq!(value["summary"], guided["guide"]["summary"]);
     write(&case.root.join("a.py"), "changed again\n");
     let request = review_request(&root, json!({"guide": value})).to_string();

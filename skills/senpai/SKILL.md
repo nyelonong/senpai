@@ -33,7 +33,14 @@ The bundled HTML page opens **Diff** by default and offers **Guided** beside it.
 Write a concise guide for every diff review except a single small file; it is a
 best-effort enhancement, not a prerequisite for human review. Include inspected before/after
 behavior, optional flow labels and whole-file chapters ordered by logic and risk.
-The real complete diff remains authoritative.
+Give a chapter `steps` when it changes more than one function: one step per
+function or region, `{"title", "note", "repository", "path", "lines": [start, end]}`,
+with a title of at most 80 characters, a one-line note, one of the chapter's files
+and after-side line numbers (before-side for a deleted file). Each changed line
+shows under the first step whose range holds it; changed lines outside every
+range show as "Other lines", so cover each function's whole range.
+Keep chapter summaries to two sentences; the page shows only their first lines
+in the flow. The real complete diff remains authoritative.
 
 Write the guide yourself from the diff you have already inspected. Store guide JSON privately
 outside reviewed repositories and the client recovery directory. Obtain the exact

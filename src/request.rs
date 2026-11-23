@@ -255,6 +255,59 @@ fn is_fingerprint(value: &Value) -> bool {
     matches!(value, Value::Str(s) if s.as_wtf8().len() == 64 && s.as_wtf8().iter().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f')))
 }
 
+const MAX_STEPS: usize = 64;
+const MAX_STEP_LINE: i128 = 10_000_000;
+
+/// A step names one function or region of one of its chapter's files by its
+/// after-side line range (before-side for a deleted file).
+fn normalize_steps(steps: &Value, files: &[Value]) -> Result<Vec<Value>> {
+    let steps = match steps.as_array() {
+        Some(s) if (1..=MAX_STEPS).contains(&s.len()) => s,
+        _ => return Err(result_error(format!("guide chapter steps must be a list of 1–{MAX_STEPS} steps"))),
+    };
+    let mut out = Vec::new();
+    for step in steps {
+        let step = match step.as_object() {
+            Some(s) if s.has_exact_keys(&["title", "note", "repository", "path", "lines"]) => s,
+            _ => return Err(result_error("each guide step needs title, note, repository, path and lines")),
+        };
+        let root = normalize_root(step.get("repository"))?;
+        let path_value = step.get("path").cloned().unwrap_or(Value::Null);
+        let path = normalize_paths(Some(&Value::Array(vec![path_value])))?
+            .expect("one path")
+            .remove(0);
+        let reference = Value::Object(Object::new().with("repository", root.clone()).with("path", path.clone()));
+        if !files.contains(&reference) {
+            return Err(result_error(format!("guide step file is not one of its chapter's files: {}", path.display())));
+        }
+        let bounds: Option<Vec<i128>> = step
+            .get("lines")
+            .and_then(Value::as_array)
+            .filter(|l| l.len() == 2)
+            .and_then(|l| {
+                l.iter()
+                    .map(|n| match n {
+                        Value::Int(i) => Some(*i),
+                        _ => None,
+                    })
+                    .collect()
+            });
+        let (start, end) = match bounds.as_deref() {
+            Some(&[start, end]) if 1 <= start && start <= end && end <= MAX_STEP_LINE => (start, end),
+            _ => return Err(result_error(format!("guide step lines must be [start, end] with 1 ≤ start ≤ end ≤ {MAX_STEP_LINE}"))),
+        };
+        out.push(Value::Object(
+            Object::new()
+                .with("title", guide_text(step.get("title").expect("required"), "step title", 80)?)
+                .with("note", guide_text(step.get("note").expect("required"), "step note", 300)?)
+                .with("repository", root)
+                .with("path", path)
+                .with("lines", Value::Array(vec![Value::Int(start), Value::Int(end)])),
+        ));
+    }
+    Ok(out)
+}
+
 pub fn normalize_guide(value: &Value) -> Result<Value> {
     let Some(object) = value.as_object() else {
         return Err(result_error("guide must be an object"));
@@ -305,8 +358,13 @@ pub fn normalize_guide(value: &Value) -> Result<Value> {
     let mut out_chapters = Vec::new();
     for chapter in chapters {
         let chapter = match chapter.as_object() {
-            Some(c) if c.has_exact_keys(&["title", "summary", "files"]) => c,
-            _ => return Err(result_error("each guide chapter needs title, summary and files")),
+            Some(c)
+                if c.has_exact_keys(&["title", "summary", "files"])
+                    || c.has_exact_keys(&["title", "summary", "files", "steps"]) =>
+            {
+                c
+            }
+            _ => return Err(result_error("each guide chapter needs title, summary and files; only steps is optional")),
         };
         let files = match chapter.get("files").and_then(Value::as_array) {
             Some(f) if !f.is_empty() => f,
@@ -330,12 +388,14 @@ pub fn normalize_guide(value: &Value) -> Result<Value> {
             seen.push(identity);
             references.push(Value::Object(Object::new().with("repository", root).with("path", path)));
         }
-        out_chapters.push(Value::Object(
-            Object::new()
-                .with("title", guide_text(chapter.get("title").expect("required"), "chapter title", 200)?)
-                .with("summary", guide_text(chapter.get("summary").expect("required"), "chapter summary", 8000)?)
-                .with("files", Value::Array(references)),
-        ));
+        let mut out_chapter = Object::new()
+            .with("title", guide_text(chapter.get("title").expect("required"), "chapter title", 200)?)
+            .with("summary", guide_text(chapter.get("summary").expect("required"), "chapter summary", 8000)?);
+        if let Some(steps) = chapter.get("steps") {
+            out_chapter.insert("steps", Value::Array(normalize_steps(steps, &references)?));
+        }
+        out_chapter.insert("files", Value::Array(references));
+        out_chapters.push(Value::Object(out_chapter));
     }
     normalized.insert("chapters", Value::Array(out_chapters));
     let normalized = Value::Object(normalized);
