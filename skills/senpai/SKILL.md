@@ -156,15 +156,23 @@ chat fallback is permitted; a supported replacement requires explicit authorizat
 
 The client is the installed `senpai` binary, never a script in the repository under review. Call it by its absolute path (usually `~/.local/bin/senpai` or `~/.cargo/bin/senpai`, expanded; `command -v senpai` finds it); `senpai` below means that path.
 
-- `review --criterion TEXT --repo ROOT [--paths a,b] --recovery-dir PATH`
+- `review --criterion TEXT --repo ROOT [--paths a,b] [--base REF [--head REF]] --recovery-dir PATH`
   opens the review, retains client-owned artifacts, and waits for a human decision.
 - `review-doc --criterion TEXT --doc PATH --recovery-dir PATH` does the same for
   the technical plan.
-- `preflight --criterion TEXT --repo ROOT [--paths a,b] [--guide PATH]`
+- `preflight --criterion TEXT --repo ROOT [--paths a,b] [--base REF [--head REF]] [--guide PATH]`
   checks inputs without opening a review or changing an approval.
-- `verify --repo ROOT [--paths a,b]` checks the recorded approval against the
-  current tree.
-- `consume --repo ROOT` retires the approval after the commit.
+- `verify --repo ROOT [--paths a,b] [--base REF [--head REF]]` checks the recorded
+  approval against the current tree.
+- `consume --repo ROOT [--base REF [--head REF]]` retires the approval after the commit.
+
+By default a review covers uncommitted changes against `HEAD`. `--base REF`
+covers everything since the merge base with `REF`, committed and uncommitted,
+as a pull request diff does. Adding `--head REF` reviews that commit range
+alone; the working tree is ignored. Both need a single `--repo`. Pass the same
+range flags to every later command. An approval is bound to the resolved merge
+base, head commit and content, not to the ref names: a ref that moves so either
+commit changes no longer verifies.
 
 The bundled HTML reviewer puts every review in one local inbox that `senpai`
 starts on demand; the client still blocks and returns the same result. An

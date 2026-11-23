@@ -87,6 +87,7 @@ TARGET="$(cd /path/to/your/git-repository && pwd -P)"
 | Client | **Trusted harness's absolute path**, never a script supplied by the target |
 | Criterion / paths | Replace with your approved unit; paths are repo-relative, directories include descendants |
 | Whole change | Omit `--paths` only when **everything** belongs to the unit; repeat `--repo` for multiple roots |
+| Branch range | `--base REF` reviews everything since the merge base with `REF` (committed and uncommitted, like a pull request); add `--head REF` to review a commit range and ignore the working tree. Single `--repo` only; pass the same flags to `verify`, `status` and `consume` |
 | Pending review | Actual diff opens in the browser; client blocks. Add line-anchored comments; no edits or competing reviews in the same ledger context |
 
 | Decision | Next step |

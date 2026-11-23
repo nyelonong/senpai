@@ -805,7 +805,13 @@ function render() {
   for (const repository of data.repositories) {
     const item = document.createElement("li");
     const scope = repository.paths ? " [" + repository.paths.join(", ") + "]" : "";
-    item.textContent = repository.root + scope + " \u00b7 +" + repository.added + " / \u2212" + repository.removed;
+    const range = repository.range
+      ? " \u00b7 " + repository.range.base + " (" + repository.range.baseline.slice(0, 12) + ") \u2190 "
+        + (repository.range.head
+          ? repository.range.head + " (" + repository.range.head_commit.slice(0, 12) + ")"
+          : "working tree")
+      : "";
+    item.textContent = repository.root + scope + range + " \u00b7 +" + repository.added + " / \u2212" + repository.removed;
     repos.appendChild(item);
   }
   state.files = [];

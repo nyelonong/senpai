@@ -12,6 +12,8 @@ pub const MAX_GUIDE_BYTES: usize = 48 * 1024;
 pub struct Repository {
     pub root: PyStr,
     pub paths: Option<Vec<PyStr>>,
+    pub base: Option<String>,
+    pub head: Option<String>,
 }
 
 impl Repository {
@@ -19,6 +21,12 @@ impl Repository {
         let mut object = Object::new().with("root", &self.root);
         if let Some(paths) = &self.paths {
             object.insert("paths", Value::Array(paths.iter().map(Value::from).collect()));
+        }
+        if let Some(base) = &self.base {
+            object.insert("base", Value::from(base.as_str()));
+        }
+        if let Some(head) = &self.head {
+            object.insert("head", Value::from(head.as_str()));
         }
         Value::Object(object)
     }
@@ -152,6 +160,26 @@ pub fn normalize_paths(value: Option<&Value>) -> Result<Option<Vec<PyStr>>> {
     Ok(Some(normalized))
 }
 
+/// Validates an optional Git revision. Only printable ASCII without spaces is
+/// accepted, and a leading '-' is refused so the value can never be read as a
+/// git option.
+pub fn normalize_revision(value: Option<&Value>, name: &str) -> Result<Option<String>> {
+    let text = match value {
+        None | Some(Value::Null) => return Ok(None),
+        Some(Value::Str(s)) => s,
+        Some(_) => return Err(result_error(format!("repository {name} must be a string"))),
+    };
+    let bytes = text.as_wtf8();
+    let printable = bytes.iter().all(|b| (0x21..=0x7e).contains(b));
+    if bytes.is_empty() || bytes.len() > 256 || !printable || bytes[0] == b'-' {
+        return Err(result_error(format!(
+            "repository {name} must be 1 to 256 printable ASCII characters without spaces, not starting with '-': {}",
+            py_repr(text)
+        )));
+    }
+    Ok(Some(String::from_utf8_lossy(bytes).into_owned()))
+}
+
 pub fn normalize_repository(value: &Value) -> Result<Repository> {
     let Some(object) = value.as_object() else {
         return Err(result_error("each repository must be an object"));
@@ -159,15 +187,23 @@ pub fn normalize_repository(value: &Value) -> Result<Repository> {
     if !object.contains_key("root") {
         return Err(result_error("each repository needs a root path"));
     }
-    let mut unknown: Vec<&PyStr> = object.keys().filter(|k| *k != "root" && *k != "paths").collect();
+    let mut unknown: Vec<&PyStr> =
+        object.keys().filter(|k| !["root", "paths", "base", "head"].iter().any(|known| k == known)).collect();
     if !unknown.is_empty() {
         unknown.sort();
         let names: Vec<String> = unknown.iter().map(|k| k.display()).collect();
         return Err(result_error(format!("unsupported repository keys: {}", names.join(", "))));
     }
+    let base = normalize_revision(object.get("base"), "base")?;
+    let head = normalize_revision(object.get("head"), "head")?;
+    if head.is_some() && base.is_none() {
+        return Err(result_error("a repository head needs a base"));
+    }
     Ok(Repository {
         root: normalize_root(object.get("root"))?,
         paths: normalize_paths(object.get("paths"))?,
+        base,
+        head,
     })
 }
 
@@ -353,10 +389,17 @@ pub fn parse_request_json(text: &PyStr, require_review_fields: bool) -> Result<R
     normalize_request(&payload, require_review_fields)
 }
 
-pub fn scoped_repositories(roots: &[PyStr], paths: &Option<Vec<PyStr>>) -> Result<Vec<Repository>> {
+pub fn scoped_repositories(
+    roots: &[PyStr],
+    paths: &Option<Vec<PyStr>>,
+    base: &Option<String>,
+    head: &Option<String>,
+) -> Result<Vec<Repository>> {
     roots
         .iter()
-        .map(|root| Ok(Repository { root: normalize_root_str(root)?, paths: paths.clone() }))
+        .map(|root| {
+            Ok(Repository { root: normalize_root_str(root)?, paths: paths.clone(), base: base.clone(), head: head.clone() })
+        })
         .collect()
 }
 
@@ -433,5 +476,18 @@ mod tests {
         assert_eq!(err.message(), "unsupported review protocol version: 1");
         let dup = json::loads_str(r#"{"version":"1","review_id":"r","criterion":"c","repositories":[{"root":"/"},{"root":"/"}]}"#).unwrap();
         assert_eq!(normalize_request(&dup, true).unwrap_err().message(), "duplicate repository root: /");
+    }
+
+    #[test]
+    fn revisions_must_be_safe_git_arguments() {
+        for bad in ["", "-x", "--output=x", "a b", "main\n", "caf\u{e9}"] {
+            assert!(normalize_revision(Some(&Value::str(bad)), "base").is_err(), "{bad:?}");
+        }
+        assert!(normalize_revision(Some(&Value::Int(1)), "base").is_err());
+        for good in ["main", "origin/main", "HEAD~3", "v1.0^", "a1b2c3"] {
+            assert_eq!(normalize_revision(Some(&Value::str(good)), "base").unwrap().as_deref(), Some(good));
+        }
+        let head_only = json::loads_str(r#"{"root":"/","head":"main"}"#).unwrap();
+        assert_eq!(normalize_repository(&head_only).unwrap_err().message(), "a repository head needs a base");
     }
 }

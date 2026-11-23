@@ -16,7 +16,7 @@ use fancy_regex::Regex;
 
 use crate::commands::validate_guide_snapshot;
 use crate::error::{os_error, Error, Result};
-use crate::git::{Git, SystemGit};
+use crate::git::{self, Git, SystemGit};
 use crate::json::{self, Object, Value};
 use crate::ledger::DECISIONS;
 use crate::markdown;
@@ -24,7 +24,7 @@ use crate::os;
 use crate::pystr::{py_repr, py_splitlines, py_strip, PyStr};
 use crate::request::{parse_request_json, DocumentRequest, Repository, ReviewRequest, PROTOCOL_VERSION};
 use crate::result::{is_annotation, is_document_annotation, validate_decision_semantics, ReviewResult};
-use crate::snapshot::{self, collect_snapshot, split_patch_lines, EntryKind, StatusEntry};
+use crate::snapshot::{self, collect_snapshot, split_patch_lines, EntryKind, Range, StatusEntry};
 
 pub const PRODUCER: &str = "html_review.py";
 const HOST: &str = "127.0.0.1";
@@ -198,7 +198,7 @@ pub fn parse_patch(patch: &[u8]) -> (Vec<DiffLine>, usize, usize, bool) {
 }
 
 fn status_for(entry: &StatusEntry) -> &'static str {
-    if entry.kind == EntryKind::Untracked {
+    if matches!(entry.kind, EntryKind::Untracked | EntryKind::Added) {
         "added"
     } else if entry.original_path.as_ref().is_some_and(|p| !p.is_empty()) {
         "renamed"
@@ -243,28 +243,38 @@ pub fn language_for(path: &PyStr) -> Option<&'static str> {
     })
 }
 
-fn read_for_highlighting(root: &[u8], path: &PyStr, binary: bool) -> Option<String> {
+fn read_for_highlighting(git: &dyn Git, root: &[u8], range: &Range, entry: &StatusEntry, binary: bool) -> Option<String> {
     if binary {
         return None;
     }
-    let absolute = snapshot::absolute_path(root, path).ok()?;
-    let metadata = std::fs::metadata(os::os_path(&absolute)).ok()?;
-    if metadata.len() > MAX_HIGHLIGHT_BYTES {
-        return None;
-    }
-    let raw = std::fs::read(os::os_path(&absolute)).ok()?;
+    let raw = if range.head.is_some() {
+        if entry.mode_worktree != "100644" && entry.mode_worktree != "100755" {
+            return None;
+        }
+        let size = git.run(root, &git::args(&["cat-file", "-s", &entry.blob]), &[0]).ok()?;
+        if String::from_utf8_lossy(&size).trim().parse::<u64>().ok()? > MAX_HIGHLIGHT_BYTES {
+            return None;
+        }
+        git.run(root, &git::args(&["cat-file", "blob", &entry.blob]), &[0]).ok()?
+    } else {
+        let absolute = snapshot::absolute_path(root, &entry.path).ok()?;
+        let metadata = std::fs::metadata(os::os_path(&absolute)).ok()?;
+        if metadata.len() > MAX_HIGHLIGHT_BYTES {
+            return None;
+        }
+        std::fs::read(os::os_path(&absolute)).ok()?
+    };
     if raw.contains(&0) {
         return None;
     }
     Some(String::from_utf8_lossy(&raw).into_owned())
 }
 
-fn collect_file_diffs(git: &dyn Git, repository: &Repository) -> Result<Vec<Object>> {
+fn collect_file_diffs(git: &dyn Git, repository: &Repository, range: &Range) -> Result<Vec<Object>> {
     let root = repository.root_bytes()?;
-    let baseline = snapshot::resolve_baseline(git, &root)?;
     let mut diffs = Vec::new();
-    for entry in snapshot::selected_entries(git, repository)? {
-        let patch = snapshot::entry_patch(git, &root, &baseline, &entry)?;
+    for entry in snapshot::range_entries(git, repository, range)? {
+        let patch = snapshot::entry_patch(git, &root, range, &entry)?;
         let (lines, added, removed, binary) = parse_patch(&patch);
         let mut file = Object::new()
             .with("repository", &repository.root)
@@ -278,12 +288,27 @@ fn collect_file_diffs(git: &dyn Git, repository: &Repository) -> Result<Vec<Obje
         if let Some(language) = language_for(&entry.path) {
             file.insert("language", Value::from(language));
         }
-        if let Some(text) = read_for_highlighting(&root, &entry.path, binary) {
+        if let Some(text) = read_for_highlighting(git, &root, range, &entry, binary) {
             file.insert("text", Value::from(text));
         }
         diffs.push(file);
     }
     Ok(diffs)
+}
+
+/// The revisions a range review compares, for the page to name; absent for a
+/// working-tree review against `HEAD`.
+fn range_payload(repository: &Repository, range: &Range) -> Value {
+    let Some(base) = &repository.base else {
+        return Value::Null;
+    };
+    Value::Object(
+        Object::new()
+            .with("base", base.as_str())
+            .with("head", repository.head.as_deref().map(Value::from).unwrap_or(Value::Null))
+            .with("baseline", range.baseline.as_str())
+            .with("head_commit", range.head.as_deref().map(Value::from).unwrap_or(Value::Null)),
+    )
 }
 
 fn int_field(object: &Object, key: &str) -> i128 {
@@ -298,7 +323,8 @@ pub fn build_payload(git: &dyn Git, request: &ReviewRequest) -> Result<Value> {
     let mut repositories = Vec::new();
     let (mut total_files, mut total_added, mut total_removed) = (0usize, 0i128, 0i128);
     for repository in &request.repositories {
-        let diffs = collect_file_diffs(git, repository)?;
+        let range = snapshot::resolve_range(git, &repository.root_bytes()?, repository)?;
+        let diffs = collect_file_diffs(git, repository, &range)?;
         let added: i128 = diffs.iter().map(|d| int_field(d, "added")).sum();
         let removed: i128 = diffs.iter().map(|d| int_field(d, "removed")).sum();
         total_files += diffs.len();
@@ -313,6 +339,7 @@ pub fn build_payload(git: &dyn Git, request: &ReviewRequest) -> Result<Value> {
             Object::new()
                 .with("root", &repository.root)
                 .with("paths", paths)
+                .with("range", range_payload(repository, &range))
                 .with("added", Value::Int(added))
                 .with("removed", Value::Int(removed))
                 .with("files", Value::Array(diffs.into_iter().map(Value::Object).collect())),

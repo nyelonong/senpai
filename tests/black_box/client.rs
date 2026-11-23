@@ -304,6 +304,16 @@ pub const TESTS: &[(&str, fn())] = &[
         "duplicate_stale_and_out_of_scope_guides_fail_without_ledger_mutation",
         duplicate_stale_and_out_of_scope_guides_fail_without_ledger_mutation,
     ),
+    // RangeTests
+    ("base_review_includes_committed_and_uncommitted_changes", base_review_includes_committed_and_uncommitted_changes),
+    ("base_approval_verifies_only_with_the_same_base", base_approval_verifies_only_with_the_same_base),
+    ("head_review_ignores_the_working_tree", head_review_ignores_the_working_tree),
+    ("head_moving_during_review_denies_approval", head_moving_during_review_denies_approval),
+    ("range_usage_errors_and_unknown_revisions_fail_closed", range_usage_errors_and_unknown_revisions_fail_closed),
+    ("base_moving_during_review_denies_approval", base_moving_during_review_denies_approval),
+    ("range_reads_pathspec_like_names_literally", range_reads_pathspec_like_names_literally),
+    ("range_scope_keeps_renames_out_of_scope", range_scope_keeps_renames_out_of_scope),
+    ("range_shows_ignored_submodule_changes_and_deletions", range_shows_ignored_submodule_changes_and_deletions),
 ];
 
 // ---------------------------------------------------------------------------
@@ -501,16 +511,18 @@ impl Case {
         if let Some(paths) = paths {
             repository["paths"] = json!(paths);
         }
+        self.served_repository(repository)["files"].as_array().expect("files").clone()
+    }
+
+    /// The repository object the HTML reviewer serves for `repository`.
+    fn served_repository(&self, repository: Value) -> Value {
         let request = json!({"version": "1", "review_id": "files", "criterion": "ship it", "repositories": [repository]});
         let (process, url) =
             self.start_html(reviewer(["--review".to_string(), request.to_string()]), &[]);
-        let files = served(&url)["repositories"][0]["files"]
-            .as_array()
-            .expect("files")
-            .clone();
+        let served = served(&url)["repositories"][0].clone();
         decide(&url, "cancelled");
         process.communicate(30);
-        files
+        served
     }
 
     fn guide(&self) -> Value {
@@ -2557,4 +2569,202 @@ fn duplicate_stale_and_out_of_scope_guides_fail_without_ledger_mutation() {
         assert_eq!(result.stdout, "", "problem={problem}");
         assert_eq!(case.entries(), Vec::<Value>::new(), "problem={problem}");
     }
+}
+
+// ---------------------------------------------------------------------------
+// RangeTests
+// ---------------------------------------------------------------------------
+
+/// A case whose changes are committed on `feature`, one commit ahead of
+/// `main`, with a clean working tree.
+fn feature_case() -> Case {
+    let case = Case::new();
+    git(&case.root, &["checkout", "-q", "-b", "feature"]);
+    case.commit("feature work");
+    case
+}
+
+fn range_fingerprint(case: &Case, range: &[&str]) -> String {
+    let root = s(&case.root);
+    let mut args = vec!["preflight", "--criterion", "ship it", "--repo", &root];
+    args.extend_from_slice(range);
+    let result = case.run_client(&args, &[]);
+    assert_eq!(result.code, EXIT_OK, "{}", result.stderr);
+    single_json_line(&result)["fingerprint"].as_str().expect("a fingerprint").to_string()
+}
+
+fn served_range(case: &Case, base: &str, head: Option<&str>) -> Value {
+    let mut repository = json!({"root": s(&case.root), "base": base});
+    if let Some(head) = head {
+        repository["head"] = json!(head);
+    }
+    case.served_repository(repository)
+}
+
+fn base_review_includes_committed_and_uncommitted_changes() {
+    let case = feature_case();
+    assert_eq!(case.served_files(None, None), Vec::<Value>::new(), "nothing is uncommitted");
+    let served = served_range(&case, "main", None);
+    assert_eq!(paths_of(served["files"].as_array().expect("files")), ["a.py", "other/b.txt", "untracked.txt"]);
+    let main = git(&case.root, &["rev-parse", "main"]).trim().to_string();
+    assert_eq!(served["range"]["baseline"], json!(main));
+    assert_eq!(served["range"]["head"], Value::Null);
+    let committed = range_fingerprint(&case, &["--base", "main"]);
+    assert_ne!(committed, case.fingerprint(None, None));
+    case.write("a.py", "print('three')\n");
+    case.write("fresh.txt", "not yet tracked\n");
+    let files = served_range(&case, "main", None)["files"].as_array().expect("files").clone();
+    assert_eq!(paths_of(&files), ["a.py", "fresh.txt", "other/b.txt", "untracked.txt"]);
+    assert_ne!(committed, range_fingerprint(&case, &["--base", "main"]));
+}
+
+fn base_approval_verifies_only_with_the_same_base() {
+    let case = feature_case();
+    case.write("a.py", "print('three')\n");
+    let result = case.review(&["--base", "main"], &[]);
+    assert_eq!(result.code, EXIT_OK, "{}", result.stderr);
+    let entry = case.entries().last().expect("entry").clone();
+    assert_eq!(entry["state"], json!("approved"));
+    assert_eq!(entry["repositories"][0]["base"], json!("main"));
+    assert_eq!(case.verify(&["--base", "main"]).code, EXIT_OK);
+    assert_eq!(case.verify(&[]).code, EXIT_NOT_APPROVED, "a HEAD review is a different range");
+    case.commit("commit the reviewed change");
+    assert_eq!(case.verify(&["--base", "main"]).code, EXIT_OK, "committing reviewed content keeps the range");
+    case.write("a.py", "print('four')\n");
+    assert_eq!(case.verify(&["--base", "main"]).code, EXIT_NOT_APPROVED);
+}
+
+fn head_review_ignores_the_working_tree() {
+    let case = feature_case();
+    let range = ["--base", "main", "--head", "feature"];
+    let fixed = range_fingerprint(&case, &range);
+    assert_ne!(fixed, range_fingerprint(&case, &["--base", "main"]), "a commit range has its own fingerprint");
+    case.write("a.py", "print('uncommitted')\n");
+    case.write("fresh.txt", "not yet tracked\n");
+    assert_eq!(fixed, range_fingerprint(&case, &range));
+    let served = served_range(&case, "main", Some("feature"));
+    let files = served["files"].as_array().expect("files");
+    assert_eq!(paths_of(files), ["a.py", "other/b.txt", "untracked.txt"]);
+    let a = files.iter().find(|f| f["path"] == json!("a.py")).expect("a.py");
+    assert_eq!(a["text"], json!("print('two')\n"), "content comes from the head commit");
+    let feature = git(&case.root, &["rev-parse", "feature"]).trim().to_string();
+    assert_eq!(served["range"]["head_commit"], json!(feature));
+    let result = case.review(&range, &[]);
+    assert_eq!(result.code, EXIT_OK, "{}", result.stderr);
+    let root = s(&case.root);
+    let mut verify = vec!["verify", "--repo", root.as_str()];
+    verify.extend_from_slice(&range);
+    assert_eq!(case.run_client(&verify, &[]).code, EXIT_OK);
+    case.write("feature-only.txt", "x\n");
+    case.commit("more work");
+    assert_eq!(case.run_client(&verify, &[]).code, EXIT_NOT_APPROVED, "a moved head is a new range");
+}
+
+fn head_moving_during_review_denies_approval() {
+    let case = feature_case();
+    let root = s(&case.root);
+    let main = git(&case.root, &["rev-parse", "main"]).trim().to_string();
+    let move_head = ["-C", root.as_str(), "update-ref", "refs/heads/feature", main.as_str()].join("\t");
+    let result = case.review(
+        &["--base", "main", "--head", "feature"],
+        &[("STUB_MODE", Some("git")), ("STUB_GIT", Some(&move_head))],
+    );
+    case.assert_no_approval(&result);
+    assert!(result.stderr.contains("changed while the human was deciding"), "{}", result.stderr);
+}
+
+fn range_usage_errors_and_unknown_revisions_fail_closed() {
+    let case = feature_case();
+    let root = s(&case.root);
+    let other = case.make_repo("other");
+    let other = s(&other);
+    let unrelated = git(&case.root, &["commit-tree", EMPTY_TREE, "-m", "unrelated"]).trim().to_string();
+    let cases: Vec<(&str, Vec<&str>)> = vec![
+        ("head without base", vec!["review", "--criterion", "x", "--repo", &root, "--head", "feature"]),
+        ("base with two repos", vec!["review", "--criterion", "x", "--repo", &root, "--repo", &other, "--base", "main"]),
+        ("option-like base", vec!["review", "--criterion", "x", "--repo", &root, "--base=-p"]),
+        ("json with base", vec!["review", "--json", "{}", "--base", "main"]),
+        ("unknown base", vec!["review", "--criterion", "x", "--repo", &root, "--base", "no-such-branch"]),
+        ("unknown head", vec!["review", "--criterion", "x", "--repo", &root, "--base", "main", "--head", "nope"]),
+        ("no merge base", vec!["review", "--criterion", "x", "--repo", &root, "--base", &unrelated]),
+        ("verify unknown base", vec!["verify", "--repo", &root, "--base", "no-such-branch"]),
+    ];
+    for (label, argv) in cases {
+        let result = case.run_client(&argv, &[]);
+        assert_eq!(result.code, EXIT_ERROR, "case={label}: {}", result.stderr);
+        assert_eq!(result.stdout, "", "case={label}");
+    }
+    assert!(!case.states().contains(&json!("approved")));
+}
+
+fn base_moving_during_review_denies_approval() {
+    let case = feature_case();
+    case.write("a.py", "print('three')\n");
+    let root = s(&case.root);
+    let feature = git(&case.root, &["rev-parse", "feature"]).trim().to_string();
+    let move_base = ["-C", root.as_str(), "update-ref", "refs/heads/main", feature.as_str()].join("\t");
+    let result = case.review(&["--base", "main"], &[("STUB_MODE", Some("git")), ("STUB_GIT", Some(&move_base))]);
+    case.assert_no_approval(&result);
+    assert!(result.stderr.contains("changed while the human was deciding"), "{}", result.stderr);
+}
+
+fn added_lines(file: &Value) -> Vec<String> {
+    file["lines"]
+        .as_array()
+        .expect("lines")
+        .iter()
+        .filter(|l| l["type"] == json!("add"))
+        .map(|l| l["text"].as_str().unwrap_or_default().to_string())
+        .collect()
+}
+
+fn range_reads_pathspec_like_names_literally() {
+    let case = feature_case();
+    case.write(":(icase)B.txt", "evil\n");
+    case.commit("a pathspec-like name");
+    let served = served_range(&case, "main", Some("feature"));
+    let files = served["files"].as_array().expect("files");
+    let odd = files.iter().find(|f| f["path"] == json!(":(icase)B.txt")).expect("the odd file");
+    assert_eq!(odd["status"], json!("added"));
+    assert_eq!(added_lines(odd), ["evil"]);
+}
+
+fn range_scope_keeps_renames_out_of_scope() {
+    let case = feature_case();
+    case.write("other/keep.txt", "one\ntwo\nthree\nfour\nfive\n");
+    case.commit("add keep");
+    let base = git(&case.root, &["rev-parse", "HEAD"]).trim().to_string();
+    git(&case.root, &["mv", "other/keep.txt", "moved.txt"]);
+    case.commit("move keep out of other");
+    let mut repository = json!({"root": s(&case.root), "base": base, "head": "feature", "paths": ["other"]});
+    let files = case.served_repository(repository.clone())["files"].as_array().expect("files").clone();
+    assert_eq!(paths_of(&files), ["moved.txt"]);
+    assert_eq!(files[0]["old_path"], json!("other/keep.txt"), "the rename out of scope is shown");
+    let before = range_fingerprint(&case, &["--base", &base, "--paths", "other"]);
+    case.write("other/keep.txt", "restored\n");
+    assert_ne!(before, range_fingerprint(&case, &["--base", &base, "--paths", "other"]));
+    repository.as_object_mut().expect("object").remove("head");
+    let leaves = case.served_repository(repository)["files"].as_array().expect("files").clone();
+    assert!(!leaves.is_empty(), "the working-tree range shows the scope's changes");
+}
+
+fn range_shows_ignored_submodule_changes_and_deletions() {
+    let case = feature_case();
+    let feature = git(&case.root, &["rev-parse", "feature"]).trim().to_string();
+    let main = git(&case.root, &["rev-parse", "main"]).trim().to_string();
+    git(&case.root, &["checkout", "-q", "main"]);
+    case.write(".gitmodules", "[submodule \"sub\"]\n\tpath = sub\n\turl = ./sub\n\tignore = all\n");
+    git(&case.root, &["add", ".gitmodules"]);
+    git(&case.root, &["update-index", "--add", "--cacheinfo", &format!("160000,{main},sub")]);
+    git(&case.root, &["-c", "commit.gpgsign=false", "commit", "-q", "-m", "add sub"]);
+    git(&case.root, &["checkout", "-q", "-b", "bump"]);
+    git(&case.root, &["update-index", "--cacheinfo", &format!("160000,{feature},sub")]);
+    git(&case.root, &["rm", "-q", "a.py"]);
+    git(&case.root, &["-c", "commit.gpgsign=false", "commit", "-q", "-m", "bump sub, drop a.py"]);
+    let files = served_range(&case, "main", Some("bump"))["files"].as_array().expect("files").clone();
+    assert_eq!(paths_of(&files), ["a.py", "sub"]);
+    let a = files.iter().find(|f| f["path"] == json!("a.py")).expect("a.py");
+    assert_eq!(a["status"], json!("deleted"));
+    let sub = files.iter().find(|f| f["path"] == json!("sub")).expect("sub");
+    assert!(added_lines(sub).iter().any(|l| l.contains(&feature)), "{sub}");
 }

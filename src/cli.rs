@@ -35,6 +35,8 @@ fn repository_options(paths: bool, required: bool) -> Vec<OptionSpec> {
     if paths {
         out.push(opt("--paths", "A,B", "comma-separated repository-relative scope (single --repo only)"));
     }
+    out.push(opt("--base", "REF", "review changes since the merge base with REF (single --repo only)"));
+    out.push(opt("--head", "REF", "end the reviewed range at commit REF instead of the working tree (needs --base)"));
     out.push(opt("--json", "REQUEST", "a complete ReviewRequest JSON document"));
     out
 }
