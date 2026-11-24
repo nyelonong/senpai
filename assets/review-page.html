@@ -750,6 +750,9 @@ async function sendDecision(decision) {
   }
   state.submitted = true;
   el("overlay").hidden = false;
+  // Browsers close only tabs that a script or the OS opened with a single
+  // history entry; any other tab ignores this and keeps the overlay.
+  window.close();
   return true;
 }
 
