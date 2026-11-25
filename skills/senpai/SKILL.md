@@ -199,6 +199,8 @@ crashed inbox fails the review closed (exit 2). `senpai inbox` reopens the page;
 `SENPAI_INBOX=0` gives a review its own one-off page instead. Inside Tern, a new
 review opens the page in a browser block beside the agent's pane; inside Rex,
 a split there shows the page through terminal-browser, or `senpai tui` without it; `SENPAI_SURFACE=browser` keeps the browser.
+The terminal-browser split is the default inside Rex and needs no setting; when
+terminal-browser is not on `PATH`, `SENPAI_TERMINAL_BROWSER` names its path.
 
 The reviewer is any process that takes one JSON request argument and prints one
 JSON result line. `TASK_REVIEW_REVIEWER` selects it and defaults to the bundled
