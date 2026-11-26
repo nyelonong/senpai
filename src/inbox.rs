@@ -530,15 +530,23 @@ fn terminal_browser() -> Option<PathBuf> {
     }
 }
 
+/// Starts terminal-browser (`$1`) on the page (`$2`) once Rex shows the pane.
+/// Until then Rex reports 24x80 cells of a placeholder 8x16 pixels.
+/// terminal-browser takes the later change to the real cell size for a
+/// terminal font zoom, zooms the page to match, and Chromium keeps that zoom
+/// for every later page on 127.0.0.1.
+const OPEN_WHEN_SHOWN: &str =
+    r#"while [ "$(stty size 2>/dev/null)" = "24 80" ]; do sleep 0.2; done; exec "$1" open "$2" --no-merge"#;
+
 /// Opens `url` with terminal-browser in a Rex split beside the agent's pane.
 fn open_rex_page(program: &std::path::Path, url: &str) -> std::result::Result<Shown, String> {
     let (session, block) = rex_target().ok_or("REX_SESSION and REX_BLOCK are not set")?;
     let mut command = Command::new("rex");
     command
         .args(["split", "-s", &session, "-b", &block, "--split=right", "--focus=false", "--label", "senpai"])
-        .args(["--shell=none", "--json", "--"])
+        .args(["--shell=none", "--json", "--", "/bin/sh", "-c", OPEN_WHEN_SHOWN, "sh"])
         .arg(program)
-        .args(["open", url, "--no-merge"]);
+        .arg(url);
     let (ok, output) = run_helper(&mut command, "rex split")?;
     let created = std::str::from_utf8(&output).ok().and_then(|t| json::loads_str(t.trim()).ok());
     let pane = created

@@ -998,10 +998,10 @@ fn rex_shows_the_real_page_with_terminal_browser() {
     let program = case.fake_terminal_browser();
     let (mut process, url) = case.review(&case.repo("one"));
     let calls = wait_for(10.0, "the page pane", || Some(fakes::rex_calls(&record)).filter(|c| c.len() >= 2));
-    let mut expected = strings(&["split", "-s", "session:test", "-b", "block:agent", "--split=right", "--focus=false",
-                                 "--label", "senpai", "--shell=none", "--json", "--"]);
-    expected.extend([program.to_string_lossy().into_owned(), "open".into(), url.clone(), "--no-merge".into()]);
-    assert_eq!(calls[0], expected);
+    let expected = strings(&["split", "-s", "session:test", "-b", "block:agent", "--split=right", "--focus=false",
+                                 "--label", "senpai", "--shell=none", "--json", "--", "/bin/sh", "-c"]);
+    assert_eq!(calls[0][..expected.len()], expected[..]);
+    assert_eq!(calls[0][calls[0].len() - 3..], [String::from("sh"), program.to_string_lossy().into_owned(), url.clone()]);
     assert_eq!(calls[1], strings(&["block", "ls", "-s", "session:test", "--json"]));
     assert_eq!(post_status(&format!("{url}api/decision"), &approve()), 204);
     assert_eq!(process.finish().0, EXIT_OK);
